@@ -1,45 +1,123 @@
-import { Tabs } from 'expo-router';
 import React from 'react';
-import { Platform } from 'react-native';
+import {
+  View,
+  Text,
+  useColorScheme,
+  TouchableOpacity,
+  Image,
+} from 'react-native';
+import { Tabs, Link } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { images } from '@/constants/images'; 
 
-import { HapticTab } from '@/components/HapticTab';
-import { IconSymbol } from '@/components/ui/IconSymbol';
-import TabBarBackground from '@/components/ui/TabBarBackground';
-import { Colors } from '@/constants/Colors';
-import { useColorScheme } from '@/hooks/useColorScheme';
+const TabIcon = ({ name, focused }: { name: any; focused: boolean }) => {
+  return (
+    <Ionicons
+      name={name}
+      size={focused ? 26 : 22}
+      color={focused ? '#4F46E5' : '#9CA3AF'}
+    />
+  );
+};
 
-export default function TabLayout() {
+const CustomHeader = ({ route }: { route: { name: string } }) => {
+  const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme();
+  const isDark = colorScheme === 'dark';
+  const isHome = route.name === 'Home';
+
+  return (
+    <View
+      style={{
+        paddingTop: insets.top + 12,
+        paddingBottom: 12,
+        backgroundColor: isDark ? '#000' : 'transparent',
+        paddingHorizontal: 16,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        borderBottomWidth: 0.5,
+        borderBottomColor: isDark ? '#111827;' : '#e5e7eb',
+      }}
+    >
+      {isHome ? (
+        <Image
+          source={images.habitronLogo}
+          style={{ width: 32, height: 32 }}
+          resizeMode="contain"
+        />
+      ) : (
+        <Text style={{ color: isDark ? '#fff' : '#000', fontSize: 22, fontWeight: '700' }}>
+          {route.name}
+        </Text>
+      )}
+
+      <Link href="/screens/account" asChild>
+        <TouchableOpacity >
+          <Ionicons name="person-circle-outline" size={32} color="#6B7280" />
+        </TouchableOpacity>
+      </Link>
+    </View>
+  );
+};
+
+const TabLayout = () => {
+  const colorScheme = useColorScheme();
+  const isDark = colorScheme === 'dark';
 
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
-        headerShown: false,
-        tabBarButton: HapticTab,
-        tabBarBackground: TabBarBackground,
-        tabBarStyle: Platform.select({
-          ios: {
-            // Use a transparent background on iOS to show the blur effect
-            position: 'absolute',
-          },
-          default: {},
-        }),
-      }}>
+        tabBarShowLabel: true,
+        header: ({ route }) => <CustomHeader route={route} />,
+        tabBarStyle: {
+          left: 16,
+          right: 16,
+          overflow: 'hidden',
+          borderWidth: 0,
+          elevation: 0,
+          backgroundColor: isDark? "black" : "white",
+          borderTopWidth: 0,          
+        },
+      }}
+    >
       <Tabs.Screen
-        name="index"
+        name="Home"
         options={{
-          title: 'Home',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="house.fill" color={color} />,
+          tabBarIcon: ({ focused }) => <TabIcon name="home-outline" focused={focused} />,
         }}
       />
       <Tabs.Screen
-        name="explore"
+        name="ai_coach"
         options={{
-          title: 'Explore',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="paperplane.fill" color={color} />,
+          title: 'AI Coach',
+          tabBarIcon: ({ focused }) => <TabIcon name="chatbubble-ellipses-outline" focused={focused} />,
+        }}
+      />
+      <Tabs.Screen
+        name="mood_stat"
+        options={{
+          title: 'Mood',
+          tabBarIcon: ({ focused }) => <TabIcon name="happy-outline" focused={focused} />,
+        }}
+      />
+      <Tabs.Screen
+        name="report"
+        options={{
+          title: 'Report',
+          tabBarIcon: ({ focused }) => <TabIcon name="bar-chart-outline" focused={focused} />,
+        }}
+      />
+      <Tabs.Screen
+        name="community"
+        options={{
+          title: 'Community',
+          tabBarIcon: ({ focused }) => <TabIcon name="people-outline" focused={focused} />,
         }}
       />
     </Tabs>
   );
-}
+};
+
+export default TabLayout;

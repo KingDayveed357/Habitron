@@ -1,0 +1,98 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  transition-property: color, background-color, border-color;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 150ms;
+}
+
+/* Global app background */
+.app-background {
+  @apply bg-background flex-1;
+}
+
+/* Button component classes */
+@layer components {
+  .btn-primary {
+    @apply bg-btn-primary text-btn-primary-text px-4 py-2 rounded-lg font-medium;
+    @apply active:bg-btn-primary-hover;
+  }
+  
+  .btn-secondary {
+    @apply bg-btn-secondary text-btn-secondary-text px-4 py-2 rounded-lg font-medium;
+    @apply active:bg-btn-secondary-hover;
+  }
+  
+  .btn-danger {
+    @apply bg-btn-danger text-btn-danger-text px-4 py-2 rounded-lg font-medium;
+    @apply active:bg-btn-danger-hover;
+  }
+  
+  .btn-outline {
+    @apply border-2 border-btn-primary text-btn-primary bg-transparent px-4 py-2 rounded-lg font-medium;
+    @apply active:bg-btn-primary active:text-btn-primary-text;
+  }
+
+  .btn-auth{
+    @apply rounded-full items-center p-2 mb-4 flex-row border border-gray-300 dark:border-gray-700  dark:bg-gray-800 
+  }
+  
+  /* Input component classes */
+  .input-field {
+    @apply bg-input-bg border border-input-border text-input-text px-3 py-2 rounded-lg;
+    @apply placeholder:text-input-placeholder;
+  }
+  
+  /* Text component classes */
+  .text-heading {
+    @apply text-text-primary text-2xl font-bold;
+  }
+  
+  .text-subheading {
+    @apply text-text-secondary text-xl font-semibold;
+  }
+  
+  .text-body {
+    @apply text-text-primary text-base;
+  }
+  
+  .text-caption {
+    @apply text-text-secondary text-sm;
+  }
+  
+  .text-label {
+    @apply text-text-secondary text-sm font-medium;
+  }
+  
+  /* Card component classes */
+  /* .card {
+    @apply bg-card border border-border rounded-lg p-4;
+  } */
+  .card {
+    @apply rounded-2xl p-6 mb-6 shadow-sm bg-white dark:bg-gray-800;
+  }
+
+  .gradient-card {
+    @apply rounded-2xl p-6 mb-6 bg-gradient-to-r from-blue-500 to-purple-600;
+  }
+
+  
+  .card-surface {
+    @apply bg-surface border border-border rounded-lg p-4;
+  }
+  
+  /* Surface component classes */
+  .surface-primary {
+    @apply bg-surface;
+  }
+  
+  .surface-secondary {
+    @apply bg-surface-secondary;
+  }
+  
+  .surface-tertiary {
+    @apply bg-surface-tertiary;
+  }
+}
