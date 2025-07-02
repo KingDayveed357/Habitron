@@ -222,5 +222,3 @@ Habitron is an AI-powered mobile habit-tracking app built to help users build, s
 
 ## 🚀 Vision
 Habitron should become the daily accountability partner people trust to help them grow — smart, kind, always ready with support. The AI makes it personal. The design makes it joyful. The science makes it effective.
-
-Let this document guide your dev team, design reviews, and feature roadmap. When in doubt, always ask: *"Is this helping the user build better habits, smarter and simpler?"*
