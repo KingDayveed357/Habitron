@@ -3,7 +3,6 @@ import React, { useState } from 'react'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useRouter } from 'expo-router'
 import HabitCard from '../components/ui/HabitCard'
-import ThemeToggle from '../components/ThemeToggle';
 import { Ionicons } from '@expo/vector-icons'
 
 const Home = () => {
@@ -79,7 +78,6 @@ const Home = () => {
 
   return (
     <SafeAreaView className="flex-1 app-background" edges={['bottom']}>
-      <ThemeToggle />
       <ScrollView 
         className="flex-1 px-4"
         showsVerticalScrollIndicator={false}

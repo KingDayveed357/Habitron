@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { FeedItem } from '@/interfaces/interfaces'; // Adjust the import path as needed
+import { FeedItem } from '@/interfaces/interfaces';
 
 interface FeedItemComponentProps {
   item: FeedItem;
@@ -9,10 +9,10 @@ interface FeedItemComponentProps {
   onEncourage?: (itemId: string) => void;
 }
 
-export const FeedItemComponent: React.FC<FeedItemComponentProps> = ({ 
-  item, 
-  onLike, 
-  onEncourage 
+export const FeedItemComponent: React.FC<FeedItemComponentProps> = ({
+  item,
+  onLike,
+  onEncourage
 }) => {
   const getTypeIcon = (type: FeedItem['type']) => {
     switch (type) {
@@ -37,32 +37,32 @@ export const FeedItemComponent: React.FC<FeedItemComponentProps> = ({
   };
 
   return (
-    <View className="bg-white p-4 mb-3 rounded-xl shadow-sm border border-gray-100">
+    <View className="card">
       <View className="flex-row items-center mb-3">
         <Text className="text-2xl mr-3">{item.user.avatar}</Text>
         <View className="flex-1">
-          <Text className="font-semibold text-gray-800">{item.user.name}</Text>
-          <Text className="text-gray-500 text-sm">{item.timestamp}</Text>
+          <Text className="text-body font-semibold">{item.user.name}</Text>
+          <Text className="text-caption">{item.timestamp}</Text>
         </View>
         <Text className="text-lg">{getTypeIcon(item.type)}</Text>
       </View>
       
-      <Text className="text-gray-700 mb-3">{getActivityText()}</Text>
-
+      <Text className="text-body mb-3">{getActivityText()}</Text>
+      
       <View className="flex-row items-center justify-between">
         <TouchableOpacity 
           className="flex-row items-center"
           onPress={() => onLike?.(item.id)}
         >
           <Ionicons 
-            name={item.isLiked ? "heart" : "heart-outline"} 
-            size={20} 
-            color={item.isLiked ? "#ef4444" : "#6b7280"} 
+            name={item.isLiked ? "heart" : "heart-outline"}
+            size={20}
+            color={item.isLiked ? "#ef4444" : "#6b7280"}
           />
-          <Text className="ml-1 text-gray-600 text-sm">{item.likes}</Text>
+          <Text className="ml-1 text-caption">{item.likes}</Text>
         </TouchableOpacity>
         <TouchableOpacity onPress={() => onEncourage?.(item.id)}>
-          <Text className="text-blue-500 text-sm font-medium">Encourage</Text>
+          <Text className="text-blue-500 dark:text-blue-400 text-sm font-medium">Encourage</Text>
         </TouchableOpacity>
       </View>
     </View>

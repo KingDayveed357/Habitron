@@ -34,7 +34,7 @@ const OnboardingScreen = () => {
 
   return (
     <View className='app-background'>
-      <ThemeToggle />
+       {/* <ThemeToggle /> */}
       <FlatList
         data={slides}
         renderItem={({ item }) => <OnboardingItem item={item} />}

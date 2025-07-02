@@ -16,25 +16,10 @@ module.exports = {
         // Brand colors
         primary: {
           DEFAULT: "var(--color-primary-default)",
-          light: "var(--color-primary-light)",
-        },
-        secondary: {
-          DEFAULT: "var(--color-secondary-default)",
-          light: "var(--color-secondary-light)",
-        },
-        tertiary: {
-          DEFAULT: "var(--color-tertiary-default)",
-          light: "var(--color-tertiary-light)",
-        },
-        accent: {
-          DEFAULT: "var(--color-accent-default)",
-          light: "var(--color-accent-light)",
+          
         },
         grey: {
           DEFAULT: "var(--color-grey-default)",
-        },
-        slate: {
-          DEFAULT: "var(--color-slate-default)",
         },
         dark: {
           DEFAULT: "var(--color-dark-default)",
@@ -42,7 +27,6 @@ module.exports = {
         light: {
           DEFAULT: "var(--color-light-default)",
         },
-        overlay: "var(--color-overlay)",
         
         // Semantic colors
         background: "var(--color-background)",
@@ -55,17 +39,8 @@ module.exports = {
         'btn-primary-text': "var(--color-button-primary-text)",
         'btn-primary-hover': "var(--color-button-primary-hover)",
         
-        'btn-secondary': "var(--color-button-secondary)",
-        'btn-secondary-text': "var(--color-button-secondary-text)",
-        'btn-secondary-hover': "var(--color-button-secondary-hover)",
-        
-        'btn-danger': "var(--color-button-danger)",
-        'btn-danger-text': "var(--color-button-danger-text)",
-        'btn-danger-hover': "var(--color-button-danger-hover)",
         
         'input-bg': "var(--color-input-background)",
-        'input-border': "var(--color-input-border)",
-        'input-text': "var(--color-input-text)",
         'input-placeholder': "var(--color-input-placeholder)",
         
         'text-primary': "var(--color-text-primary)",

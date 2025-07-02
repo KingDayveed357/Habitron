@@ -1,11 +1,10 @@
-
 // screens/CommunityScreen.tsx
 import React, { useState } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { SearchBar } from '../components/community/SearchBar';
 import { TabNavigation } from '../components/community/TabNavigation';
-import  LeaderboardCard  from '../components/community/LeaderBoardCard';
+import  LeaderboardCard  from '../components/community/LeaderboardCard';
 import { FeedItemComponent } from '../components/community/FeedItem';
 import { ChallengeCard } from '../components/community/ChallengeCard';
 import { ThreadCard } from '../components/community/ThreadCard';
@@ -154,7 +153,7 @@ const Community: React.FC = () => {
   };
 
   return (
-    <SafeAreaView className="flex-1 bg-gray-50">
+    <SafeAreaView className="app-background">
       <SearchBar searchQuery={searchQuery} onSearchChange={setSearchQuery} />
       <TabNavigation activeTab={activeTab} onTabChange={setActiveTab} />
 
@@ -165,7 +164,7 @@ const Community: React.FC = () => {
       >
         {activeTab === 'feed' && (
           <>
-            <Text className="text-xl font-bold text-gray-800 mb-4">Community Feed</Text>
+            <Text className="text-heading mb-4">Community Feed</Text>
             {feedData.map((item) => (
               <FeedItemComponent 
                 key={item.id} 
@@ -179,7 +178,7 @@ const Community: React.FC = () => {
 
         {activeTab === 'challenges' && (
           <>
-            <Text className="text-xl font-bold text-gray-800 mb-4">Active Challenges</Text>
+            <Text className="text-heading mb-4">Active Challenges</Text>
             {challengesData.map((challenge) => (
               <ChallengeCard 
                 key={challenge.id} 
@@ -189,17 +188,17 @@ const Community: React.FC = () => {
               />
             ))}
             <TouchableOpacity 
-              className="bg-blue-500 p-4 rounded-xl items-center mb-4"
+              className="btn-primary p-4 rounded-xl items-center mb-4"
               onPress={handleCreateChallenge}
             >
-              <Text className="text-white font-semibold text-lg">Create New Challenge</Text>
+              <Text className="text-btn-primary-text font-semibold text-lg">Create New Challenge</Text>
             </TouchableOpacity>
           </>
         )}
 
         {activeTab === 'leaderboard' && (
           <>
-            <Text className="text-xl font-bold text-gray-800 mb-4">Top Performers</Text>
+            <Text className="text-heading mb-4">Top Performers</Text>
             {leaderboardData.map((user, index) => (
               <LeaderboardCard key={user.id} user={user} rank={index + 1} />
             ))}
@@ -209,12 +208,12 @@ const Community: React.FC = () => {
         {activeTab === 'discussions' && (
           <>
             <View className="flex-row justify-between items-center mb-4">
-              <Text className="text-xl font-bold text-gray-800">Discussions</Text>
+              <Text className="text-heading">Discussions</Text>
               <TouchableOpacity 
-                className="bg-blue-500 px-4 py-2 rounded-lg"
+                className="btn-primary px-4 py-2 rounded-lg"
                 onPress={handleNewPost}
               >
-                <Text className="text-white font-medium">New Post</Text>
+                <Text className="text-btn-primary-text font-medium">New Post</Text>
               </TouchableOpacity>
             </View>
             {discussionsData.map((thread) => (

@@ -6,13 +6,13 @@ export const slides: Slide[] = [
   {
     id: '1',
     title: 'Welcome to Habitron - Your Personal Habit Tracker!',
-    description: 'Take control of your habits and transform your life with Habilty. Let’s get started on your journey to success!',
+    description: 'Take control of your habits and transform your life with Habitron. Let’s get started on your journey to success!',
     image: icons.onboarding1,
   },
   {
     id: '2',
     title: 'Explore Habitron Features for Your Journey!',
-    description: 'With intuitive habit creation and insightful progress tracking, Habilty makes it easy to stay focused, motivated, and accountable.',
+    description: 'With intuitive habit creation and insightful progress tracking, Habitron makes it easy to stay focused, motivated, and accountable.',
     image: icons.onboarding2,
   },
   {
