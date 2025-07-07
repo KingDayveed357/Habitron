@@ -128,6 +128,7 @@ const AccountScreen: React.FC = () => {
     value,
     label,
     color,
+    
   }) => (
     <View className={`flex-1 bg-white dark:bg-gray-800 rounded-2xl p-4 mx-1 ${color}`}>
       <View className="flex-row items-center justify-between mb-2">

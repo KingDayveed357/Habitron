@@ -22,7 +22,8 @@ Habitron is an AI-powered mobile habit-tracking app built to help users build, s
 
 #### 1. **User Onboarding & Goal Setting**
 
-* Welcome slides and account setup (email/phone or anonymous)
+* Welcome slides and signup option with email and password or google or facebook or apple or X 
+* Signin with email and password or google or facebook or apple afterwards redirect to home page
 * Questionnaire: Choose goals (wellness, fitness, productivity, etc.)
 * Smart habit suggestions based on goals
 
@@ -107,7 +108,7 @@ Habitron is an AI-powered mobile habit-tracking app built to help users build, s
 * Navigation: Bottom tab + stack navigator
 * Component-based architecture
 
-### 2. **Backend (Node.js + Express + MongoDB)**
+### 2. **Backend **
 
 * API for user data, habits, mood logs, challenges
 * AI Service endpoint for coaching and suggestions

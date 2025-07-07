@@ -1,0 +1,36 @@
+7/7/2025 - LAST UPDATE MADE ON HABITRON
+- Completed 80% of frontend design
+- Added Supabase to the app
+- Save users post-signup Onboarding Questions to customize user's habit's goals - PENDING
+- Created an AuthService class to handle {
+    signup with Email/Password,  - DONE
+    signin with Email/Password, - DONE
+    Google Signin, -  HALF DONE
+    Apple Signin, - PENDING
+    Facebook Signin, - PENDING
+    Twitter Signin - PENDING
+    Forgot-password, -HALF DONE
+    Reset-password, - HALF DONE
+    signout, PENDING
+}
+- Configured a functional users table in supabase for storing users data
+- Configured google console account for habitron google auth creating web client id, andriod client id and ios client id,
+- Currently facing an error on the googleSignin:   Error: Client Id property `androidClientId` must be defined to use Google auth on this platform.
+
+
+WHAT'S LEFT
+- Finish up authentication as stated above
+- Save users post-signup Onboarding Questions to customize user's habit's goals 
+- CRUD operations for habit and a habit table in Supabase
+- Set up user's account settings, update and delete user's profile.
+- Track reports
+- Join communities and join challenges
+- AI Habit coach providing insights, recommendations and suggestions
+- Mood tracking - Enable user's update their mood status daily with history to view their mood for different timePeriod
+- Reminders and Notifications - To enable users: {
+    Set up reminders for habits
+    Remind users to update their mood status for the day
+    Send notification on communities engagements
+    Send notification on challenges joined and participation activity
+}
+- SEND TO PLAYSTORE AND APPSTORE
