@@ -114,13 +114,15 @@ export class AuthService {
   // Google Authentication using expo-auth-session
   static useGoogleAuth() {
     const [request, response, promptAsync] = Google.useAuthRequest({
-      clientId: process.env.GOOGLE_WEB_CLIENT_ID,
-      iosClientId: process.env.GOOGLE_IOS_CLIENT_ID,
-      androidClientId: process.env.GOOGLE_ANDRIOD_CLIENT_ID,
+      clientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
+      iosClientId: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID,
+      androidClientId: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID,
       scopes: ['openid', 'profile', 'email'],
       redirectUri: makeRedirectUri({
         scheme: 'habitron', 
         path: 'auth',
+        // useProxy: true
+        preferLocalhost: true,
       }),
     });
 

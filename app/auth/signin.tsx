@@ -216,7 +216,7 @@ export default function SignIn({ onLoginSuccess, onForgotPassword }: Props) {
 
   return (
     <SafeAreaView className="flex-1 app-background relative">
-      <DevResetButton />
+      {/* <DevResetButton /> */}
       <KeyboardAvoidingView 
         behavior={Platform.OS === 'ios' ? 'padding' : undefined} 
         keyboardVerticalOffset={80}

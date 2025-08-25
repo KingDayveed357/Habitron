@@ -10,6 +10,7 @@ import { Tabs, Link } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { images } from '@/constants/images'; 
+import { ProtectedRoute } from '../components/ProtectedRoute';
 
 const TabIcon = ({ name, focused }: { name: any; focused: boolean }) => {
   return (
@@ -67,6 +68,7 @@ const TabLayout = () => {
   const isDark = colorScheme === 'dark';
 
   return (
+     <ProtectedRoute>
     <Tabs
       screenOptions={{
         tabBarShowLabel: true,
@@ -117,6 +119,7 @@ const TabLayout = () => {
         }}
       />
     </Tabs>
+    </ProtectedRoute>
   );
 };
 

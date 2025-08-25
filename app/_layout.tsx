@@ -5,6 +5,7 @@ import { StatusBar, View } from "react-native";
 import { ThemeProvider } from '../context/ThemeContext';
 import { NavigationContainer } from '@react-navigation/native';
 import "./globals.css";
+import { AppProviders } from './components/provider/AuthProvider';
 
 function AppStack() {
 
@@ -38,8 +39,10 @@ export default function RootLayout() {
   if (showOnboarding === null) return null;
 
   return (
+     <AppProviders>
     <ThemeProvider>
       <AppStack />
     </ThemeProvider>
+    </AppProviders>
   );
 }

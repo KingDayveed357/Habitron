@@ -4,6 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import { images } from '@/constants/images'
 import { Ionicons } from '@expo/vector-icons'
 import { LinearGradient } from 'expo-linear-gradient'
+import { useAuth } from '@/hooks/useAuth';
 
 interface ChatMessage {
   id: string
@@ -13,6 +14,7 @@ interface ChatMessage {
 }
 
 const AICoach = () => {
+  const { user } = useAuth();
   const [message, setMessage] = useState('')
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     {
@@ -127,11 +129,11 @@ const AICoach = () => {
           <View className='card p-4 mb-6 '>
             <View className='flex-row items-center mb-4'>
               <Ionicons name="chatbubble-ellipses" size={20} color="#6B7280" />
-              <Text className='text-body ml-2'>Hi dave! 👋 I'm your AI habit coach. I noticed</Text>
+              <Text className='text-body ml-2'>Hi {user.name}! 👋 I'm your AI habit coach. I noticed</Text>
             </View>
 
             {/* Chat Messages */}
-            <View className='space-y-3 mb-4'>
+            <View className='space-y-3 gap-3 mb-4'>
               {chatMessages.map((msg) => (
                 <View key={msg.id} className={`flex-row ${msg.isUser ? 'justify-end' : 'justify-start'}`}>
                   <View className={`max-w-[80%] rounded-2xl p-3 ${
