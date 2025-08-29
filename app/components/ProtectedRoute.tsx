@@ -3,7 +3,8 @@ import React from 'react';
 import { View, ActivityIndicator, Text } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '@/hooks/useAuth';
-import { router } from 'expo-router';
+// import { router } from 'expo-router';
+import { navigate } from 'expo-router/build/global-state/routing';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -30,7 +31,7 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
   if (!user) {
     // Redirect to login
     if (redirectTo) {
-      router.replace(redirectTo as any);
+      navigate(redirectTo as any);
     }
     
     return (

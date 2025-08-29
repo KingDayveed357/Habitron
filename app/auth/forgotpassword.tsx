@@ -101,7 +101,7 @@ const ForgotPassword: React.FC = () => {
         {/* Header */}
         <View className="mb-8">
           <Text className="text-2xl text-heading mb-2">Forgot Your Password? 🔐</Text>
-          <Text className="text-subheading leading-6">
+          <Text className="text-body leading-6">
             Enter the email associated with your Habitron account and we'll send you a 4-digit OTP to reset your password.
           </Text>
         </View>

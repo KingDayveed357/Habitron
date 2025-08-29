@@ -1,8 +1,14 @@
 // hooks/useHabits.ts
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { habitService } from '@/services/habitService';
-import { HabitWithCompletion, HabitStats, CreateHabitRequest, UpdateHabitRequest } from '@/types/habit';
+import { 
+  HabitWithCompletion, 
+  HabitStats, 
+  CreateHabitRequest, 
+  UpdateHabitRequest,
+  SyncResult
+} from '@/types/habit';
 import { useAuth } from '@/hooks/useAuth';
+import { useHabitService } from '@/hooks/useHabitService';
 
 interface UseHabitsReturn {
   habits: HabitWithCompletion[];
@@ -10,6 +16,9 @@ interface UseHabitsReturn {
   loading: boolean;
   refreshing: boolean;
   error: string | null;
+  isOnline: boolean;
+  syncStatus: 'synced' | 'pending' | 'syncing' | 'error';
+  lastSyncResult: SyncResult | null;
   // Actions
   refetch: () => Promise<void>;
   refresh: () => Promise<void>;
@@ -18,11 +27,14 @@ interface UseHabitsReturn {
   createHabit: (habitData: CreateHabitRequest) => Promise<void>;
   updateHabit: (habitId: string, updates: UpdateHabitRequest) => Promise<void>;
   deleteHabit: (habitId: string) => Promise<void>;
+  syncData: () => Promise<void>;
   clearError: () => void;
+  resolveConflict: (habitId: string, resolution: 'local' | 'remote') => Promise<void>;
 }
 
 export const useHabits = (): UseHabitsReturn => {
   const { user } = useAuth();
+  const habitService = useHabitService();
   
   const [habits, setHabits] = useState<HabitWithCompletion[]>([]);
   const [stats, setStats] = useState<HabitStats>({
@@ -34,24 +46,62 @@ export const useHabits = (): UseHabitsReturn => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isOnline, setIsOnline] = useState(true);
+  const [syncStatus, setSyncStatus] = useState<'synced' | 'pending' | 'syncing' | 'error'>('synced');
+  const [lastSyncResult, setLastSyncResult] = useState<SyncResult | null>(null);
   
   // Keep track of ongoing operations to prevent unnecessary loading states
   const isToggling = useRef(false);
   const isCreating = useRef(false);
+  const isSyncing = useRef(false);
 
-  // Optimistically update stats when habits change
-  const updateStatsFromHabits = useCallback((updatedHabits: HabitWithCompletion[]) => {
-    const totalHabits = updatedHabits.length;
-    const completedToday = updatedHabits.filter(h => h.isCompleted).length;
-    
-    setStats(prevStats => ({
-      ...prevStats,
-      totalHabits,
-      completedToday
-    }));
-  }, []);
+  // Monitor network status
+  useEffect(() => {
+    const checkNetwork = () => {
+      const networkStatus = habitService.getNetworkStatus();
+      const wasOffline = !isOnline;
+      const nowOnline = networkStatus.isConnected && networkStatus.isInternetReachable;
+      setIsOnline(nowOnline);
 
-  // Load habits and stats
+      // Auto-sync when coming back online
+      if (wasOffline && nowOnline && !isSyncing.current && user) {
+        syncData();
+      }
+
+      // Check for pending sync items
+      checkSyncStatus();
+    };
+
+    // Check initially and set up interval for network status updates
+    checkNetwork();
+    const interval = setInterval(checkNetwork, 5000);
+
+    return () => {
+      clearInterval(interval);
+    };
+  }, [isOnline, user, habitService]);
+
+  // Check if there are items pending sync
+  const checkSyncStatus = useCallback(async () => {
+    if (!user) return;
+
+    try {
+      const networkStatus = habitService.getNetworkStatus();
+      const online = networkStatus.isConnected && networkStatus.isInternetReachable;
+      
+      if (online) {
+        // Check if we have pending changes - this is a simplified check
+        // In a more advanced implementation, you could check the database for dirty records
+        setSyncStatus('synced');
+      } else {
+        setSyncStatus('pending');
+      }
+    } catch (error) {
+      console.warn('Failed to check sync status:', error);
+    }
+  }, [user, habitService]);
+
+  // Load data from habit service
   const loadData = useCallback(async (isRefresh = false, silent = false) => {
     if (!user) {
       setLoading(false);
@@ -59,7 +109,6 @@ export const useHabits = (): UseHabitsReturn => {
     }
 
     try {
-      // Only show loading indicators if not a silent refresh
       if (!silent) {
         if (isRefresh) {
           setRefreshing(true);
@@ -70,6 +119,7 @@ export const useHabits = (): UseHabitsReturn => {
       
       setError(null);
       
+      // Load from habit service
       const [habitsData, statsData] = await Promise.all([
         habitService.getHabits(),
         habitService.getHabitStats()
@@ -77,6 +127,14 @@ export const useHabits = (): UseHabitsReturn => {
       
       setHabits(habitsData);
       setStats(statsData);
+
+      // Check sync status
+      await checkSyncStatus();
+
+      // Try to sync with server if online (but don't block UI)
+      if (isOnline && !isSyncing.current) {
+        syncData().catch(err => console.warn('Background sync failed:', err));
+      }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to load habits';
       setError(errorMessage);
@@ -87,16 +145,52 @@ export const useHabits = (): UseHabitsReturn => {
         setRefreshing(false);
       }
     }
-  }, [user]);
+  }, [user, checkSyncStatus, isOnline, habitService]);
 
-  // Initial load
+  // Initial load and user change effect
   useEffect(() => {
     if (user) {
       loadData();
     } else {
       setLoading(false);
+      setHabits([]);
+      setStats({ totalHabits: 0, completedToday: 0, activeStreak: 0, completionRate: 0 });
     }
   }, [user, loadData]);
+
+  // Sync with server
+  const syncData = useCallback(async () => {
+    if (!user || !isOnline || isSyncing.current) return;
+
+    isSyncing.current = true;
+    setSyncStatus('syncing');
+
+    try {
+      const syncResult = await habitService.syncHabits();
+      setLastSyncResult(syncResult);
+      
+      if (syncResult.success) {
+        setSyncStatus('synced');
+      } else {
+        setSyncStatus('error');
+      }
+      
+      // Reload data after sync
+      await loadData(false, true);
+    } catch (error) {
+      console.error('Sync failed:', error);
+      setSyncStatus('error');
+      setLastSyncResult({
+        success: false,
+        synced_habits: 0,
+        synced_completions: 0,
+        conflicts: [],
+        errors: [error instanceof Error ? error.message : 'Unknown sync error']
+      });
+    } finally {
+      isSyncing.current = false;
+    }
+  }, [user, isOnline, loadData, habitService]);
 
   // Refetch data
   const refetch = useCallback(() => loadData(false), [loadData]);
@@ -104,80 +198,43 @@ export const useHabits = (): UseHabitsReturn => {
   // Refresh data (pull to refresh)
   const refresh = useCallback(() => loadData(true), [loadData]);
 
-  // Toggle habit completion with optimistic updates
+  // Toggle habit completion
   const toggleHabit = useCallback(async (habitId: string) => {
     if (!user || isToggling.current) return;
-
-    // Find the habit to toggle
-    const habitToToggle = habits.find(h => h.id === habitId);
-    if (!habitToToggle) return;
 
     isToggling.current = true;
 
     try {
-      // Optimistic update
-      const updatedHabits = habits.map(habit => 
-        habit.id === habitId 
-          ? { 
-              ...habit, 
-              isCompleted: !habit.isCompleted,
-              completed: habit.isCompleted ? 0 : habit.total,
-              progress: habit.isCompleted ? 0 : 1.0
-            }
-          : habit
-      );
-      
-      setHabits(updatedHabits);
-      updateStatsFromHabits(updatedHabits);
-
-      // Make API call
       await habitService.toggleHabitCompletion(habitId);
       
-      // Silent refresh to get accurate streaks and counts without showing loading
+      // Reload data to get updated state
       await loadData(false, true);
+      
     } catch (err) {
-      // Revert optimistic update on error
-      await loadData(false, true);
       const errorMessage = err instanceof Error ? err.message : 'Failed to toggle habit';
       setError(errorMessage);
       throw err;
     } finally {
       isToggling.current = false;
     }
-  }, [habits, user, loadData, updateStatsFromHabits]);
+  }, [user, loadData, habitService]);
 
   // Update habit completion count
   const updateHabitCompletion = useCallback(async (habitId: string, count: number) => {
     if (!user) return;
 
     try {
-      // Optimistic update
-      const updatedHabits = habits.map(habit => 
-        habit.id === habitId 
-          ? { 
-              ...habit, 
-              completed: count,
-              progress: Math.min(count / habit.total, 1),
-              isCompleted: count >= habit.total
-            }
-          : habit
-      );
-      
-      setHabits(updatedHabits);
-      updateStatsFromHabits(updatedHabits);
-
       await habitService.updateHabitCompletion(habitId, count);
       
-      // Silent refresh for accurate stats
+      // Reload data to get updated state
       await loadData(false, true);
+      
     } catch (err) {
-      // Revert optimistic update on error
-      await loadData(false, true);
       const errorMessage = err instanceof Error ? err.message : 'Failed to update habit completion';
       setError(errorMessage);
       throw err;
     }
-  }, [habits, user, loadData, updateStatsFromHabits]);
+  }, [user, loadData, habitService]);
 
   // Create new habit
   const createHabit = useCallback(async (habitData: CreateHabitRequest) => {
@@ -187,9 +244,12 @@ export const useHabits = (): UseHabitsReturn => {
 
     try {
       setError(null);
+      
       await habitService.createHabit(habitData);
-      // Refresh the list to show the new habit
+      
+      // Reload data to show the new habit
       await loadData();
+      
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to create habit';
       setError(errorMessage);
@@ -197,7 +257,7 @@ export const useHabits = (): UseHabitsReturn => {
     } finally {
       isCreating.current = false;
     }
-  }, [user, loadData]);
+  }, [user, loadData, habitService]);
 
   // Update existing habit
   const updateHabit = useCallback(async (habitId: string, updates: UpdateHabitRequest) => {
@@ -206,24 +266,17 @@ export const useHabits = (): UseHabitsReturn => {
     try {
       setError(null);
       
-      // Optimistic update for immediate feedback
-      const updatedHabits = habits.map(habit =>
-        habit.id === habitId ? { ...habit, ...updates } : habit
-      );
-      setHabits(updatedHabits);
-
       await habitService.updateHabit(habitId, updates);
       
-      // Silent refresh to ensure data consistency
+      // Reload data to get updated state
       await loadData(false, true);
+      
     } catch (err) {
-      // Revert optimistic update on error
-      await loadData(false, true);
       const errorMessage = err instanceof Error ? err.message : 'Failed to update habit';
       setError(errorMessage);
       throw err;
     }
-  }, [user, loadData, habits]);
+  }, [user, loadData, habitService]);
 
   // Delete habit
   const deleteHabit = useCallback(async (habitId: string) => {
@@ -232,23 +285,36 @@ export const useHabits = (): UseHabitsReturn => {
     try {
       setError(null);
       
-      // Optimistic update - remove from UI immediately
-      const updatedHabits = habits.filter(habit => habit.id !== habitId);
-      setHabits(updatedHabits);
-      updateStatsFromHabits(updatedHabits);
-
       await habitService.deleteHabit(habitId);
       
-      // Silent refresh to ensure data consistency
+      // Reload data to reflect the deletion
       await loadData(false, true);
+      
     } catch (err) {
-      // Revert optimistic update on error
-      await loadData(false, true);
       const errorMessage = err instanceof Error ? err.message : 'Failed to delete habit';
       setError(errorMessage);
       throw err;
     }
-  }, [user, loadData, habits, updateStatsFromHabits]);
+  }, [user, loadData, habitService]);
+
+  // Resolve conflict
+  const resolveConflict = useCallback(async (habitId: string, resolution: 'local' | 'remote') => {
+    if (!user) return;
+
+    try {
+      setError(null);
+      
+      await habitService.resolveConflict(habitId, resolution);
+      
+      // Reload data to reflect the resolution
+      await loadData(false, true);
+      
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to resolve conflict';
+      setError(errorMessage);
+      throw err;
+    }
+  }, [user, loadData, habitService]);
 
   // Clear error
   const clearError = useCallback(() => {
@@ -261,6 +327,9 @@ export const useHabits = (): UseHabitsReturn => {
     loading,
     refreshing,
     error,
+    isOnline,
+    syncStatus,
+    lastSyncResult,
     refetch,
     refresh,
     toggleHabit,
@@ -268,6 +337,8 @@ export const useHabits = (): UseHabitsReturn => {
     createHabit,
     updateHabit,
     deleteHabit,
-    clearError
+    syncData,
+    clearError,
+    resolveConflict
   };
 };

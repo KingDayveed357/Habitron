@@ -1,539 +1,712 @@
 // services/habitService.ts
-import { supabase } from './supabase'; 
+import uuid from 'react-native-uuid';
+import NetInfo from '@react-native-community/netinfo';
+import { supabase } from '@/services/supabase';
+import { DatabaseService } from './databaseService';
 import {
   Habit,
   HabitCompletion,
   HabitWithCompletion,
+  HabitStats,
   CreateHabitRequest,
   UpdateHabitRequest,
-  HabitStats
+  LocalHabitRecord,
+  LocalCompletionRecord,
+  SyncResult,
+  NetworkStatus
 } from '@/types/habit';
 
-class HabitService {
-  // Get all habits for the current user with today's completion status
-  async getHabits(): Promise<HabitWithCompletion[]> {
+export class HabitService {
+  private db: DatabaseService;
+  private networkStatus: NetworkStatus = { isConnected: false, isInternetReachable: false };
+  private networkUnsubscribe?: (() => void);
+
+  constructor(databaseService: DatabaseService) {
+    this.db = databaseService;
+    this.initializeNetworkListener();
+  }
+
+  private initializeNetworkListener(): void {
+    this.networkUnsubscribe = NetInfo.addEventListener(state => {
+      const wasOffline = !this.networkStatus.isConnected;
+      this.networkStatus = {
+        isConnected: state.isConnected ?? false,
+        isInternetReachable: state.isInternetReachable ?? false
+      };
+
+      // Auto-sync when coming back online
+      if (wasOffline && this.networkStatus.isConnected) {
+        this.syncHabits().catch(console.error);
+      }
+    });
+
+    // Initial network check
+    this.checkNetworkStatus();
+  }
+
+  private async checkNetworkStatus(): Promise<void> {
+    const state = await NetInfo.fetch();
+    this.networkStatus = {
+      isConnected: state.isConnected ?? false,
+      isInternetReachable: state.isInternetReachable ?? false
+    };
+  }
+
+  private isOnline(): boolean {
+    return this.networkStatus.isConnected && this.networkStatus.isInternetReachable;
+  }
+
+  public destroy(): void {
+    if (this.networkUnsubscribe) {
+      this.networkUnsubscribe();
+    }
+  }
+
+  // Get habits with offline-first approach
+  public async getHabits(): Promise<HabitWithCompletion[]> {
+    const userId = await this.getCurrentUserId();
+    if (!userId) throw new Error('User not authenticated');
+
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error('User not authenticated');
+      // Always get from local DB first
+      const localHabits = await this.db.getHabits(userId);
+      
+      // Try to sync if online (but don't wait for it)
+      if (this.isOnline()) {
+        this.syncHabits().catch(console.error);
+      }
 
-      const today = new Date().toISOString().split('T')[0];
-
-      // Get habits with their completions for today
-      const { data: habits, error } = await supabase
-        .from('habits')
-        .select(`
-          *,
-          completion:habit_completions!left(
-            id,
-            completed_count,
-            completion_date,
-            notes
-          )
-        `)
-        .eq('user_id', user.id)
-        .eq('is_active', true)
-        .eq('completion.completion_date', today)
-        .order('created_at', { ascending: false });
-
-      if (error) throw error;
-
-      // Transform data to include completion info
-      const habitsWithCompletion: HabitWithCompletion[] = await Promise.all(
-        (habits || []).map(async (habit) => {
-          const completion = Array.isArray(habit.completion) ? habit.completion[0] : habit.completion;
-          const streak = await this.calculateStreak(habit.id);
-          
-          const completedCount = completion?.completed_count || 0;
-          const targetCount = habit.target_count || 1;
-          
-          const isCompleted = completedCount >= targetCount;
-          const progress = Math.min(completedCount / targetCount, 1);
-
-          return {
-            ...habit,
-            completion,
-            streak,
-            isCompleted,
-            progress,
-            completed: completedCount,
-            total: targetCount
-          } as HabitWithCompletion;
-        })
-      );
-
-      return habitsWithCompletion;
+      // Get today's completions and calculate streaks
+      return this.enrichHabitsWithCompletions(localHabits, userId);
     } catch (error) {
-      console.error('Error fetching habits:', error);
+      console.error('Error getting habits:', error);
       throw error;
     }
   }
 
-  // Create a new habit
-  async createHabit(habitData: CreateHabitRequest): Promise<Habit> {
+private async enrichHabitsWithCompletions(
+    habits: LocalHabitRecord[], 
+    userId: string
+  ): Promise<HabitWithCompletion[]> {
+    const today = new Date().toISOString().split('T')[0];
+    const completions = await this.db.getCompletions(userId, 365); // Last year for streak calculation
+
+    return habits.map(habit => {
+      const todayCompletion = completions.find(
+        c => c.habit_id === habit.id && c.completion_date === today
+      );
+      
+      const streak = this.calculateStreak(habit.id, completions);
+      const completed = todayCompletion?.completed_count || 0;
+      const progress = Math.min(completed / habit.target_count, 1);
+      
+      return {
+        ...habit,
+        completion: todayCompletion,
+        streak,
+        isCompleted: completed >= habit.target_count,
+        progress,
+        completed,
+        total: habit.target_count
+      };
+    });
+  }
+
+  private calculateStreak(habitId: string, completions: LocalCompletionRecord[]): number {
+    const habitCompletions = completions
+      .filter(c => c.habit_id === habitId)
+      .sort((a, b) => new Date(b.completion_date).getTime() - new Date(a.completion_date).getTime());
+
+    let streak = 0;
+    const today = new Date();
+    let currentDate = new Date(today);
+
+    for (const completion of habitCompletions) {
+      const completionDate = new Date(completion.completion_date);
+      const daysDiff = Math.floor((currentDate.getTime() - completionDate.getTime()) / (1000 * 60 * 60 * 24));
+
+      if (daysDiff === 0 || daysDiff === 1) {
+        if (completion.completed_count > 0) {
+          streak++;
+          currentDate = new Date(completionDate);
+          currentDate.setDate(currentDate.getDate() - 1);
+        } else {
+          break;
+        }
+      } else {
+        break;
+      }
+    }
+
+    return streak;
+  }
+
+  // Create habit (offline-first)
+  public async createHabit(habitData: CreateHabitRequest): Promise<Habit> {
+    const userId = await this.getCurrentUserId();
+    if (!userId) throw new Error('User not authenticated');
+
+    const now = new Date().toISOString();
+    const habit: LocalHabitRecord = {
+      id: uuid.v4() as string,
+      user_id: userId,
+      title: habitData.title,
+      icon: habitData.icon,
+      description: habitData.description,
+      category: habitData.category,
+      target_count: habitData.target_count,
+      target_unit: habitData.target_unit,
+      frequency: habitData.frequency,
+      bg_color: habitData.bg_color,
+      is_active: true,
+      created_at: now,
+      updated_at: now,
+      is_dirty: true,
+      sync_status: 'pending'
+    };
+
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error('User not authenticated');
+      // Save to local DB immediately
+      await this.db.insertHabit(habit);
 
-      const { data, error } = await supabase
-        .from('habits')
-        .insert({
-          ...habitData,
-          user_id: user.id,
-          is_active: true,
-          created_at: new Date().toISOString()
-        })
-        .select()
-        .single();
+      // Try to sync if online
+      if (this.isOnline()) {
+        await this.syncSingleHabit(habit);
+      }
 
-      if (error) throw error;
-      return data as Habit;
+      return habit;
     } catch (error) {
       console.error('Error creating habit:', error);
       throw error;
     }
   }
 
-  // Update an existing habit
-  async updateHabit(habitId: string, updates: UpdateHabitRequest): Promise<Habit> {
+  // Update habit (offline-first)
+  public async updateHabit(habitId: string, updates: UpdateHabitRequest): Promise<void> {
+    const userId = await this.getCurrentUserId();
+    if (!userId) throw new Error('User not authenticated');
+
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error('User not authenticated');
+      const updateData: Partial<LocalHabitRecord> = {
+        ...updates,
+        updated_at: new Date().toISOString(),
+        is_dirty: true,
+        sync_status: 'pending'
+      };
 
-      const { data, error } = await supabase
-        .from('habits')
-        .update({
-          ...updates,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', habitId)
-        .eq('user_id', user.id)
-        .select()
-        .single();
+      // Update local DB immediately
+      await this.db.updateHabit(habitId, updateData);
 
-      if (error) throw error;
-      return data as Habit;
+      // Try to sync if online
+      if (this.isOnline()) {
+        const habits = await this.db.getHabits(userId);
+        const habit = habits.find(h => h.id === habitId);
+        if (habit) {
+          await this.syncSingleHabit(habit);
+        }
+      }
     } catch (error) {
       console.error('Error updating habit:', error);
       throw error;
     }
   }
 
-  // Delete a habit (soft delete by setting is_active to false)
-  async deleteHabit(habitId: string): Promise<void> {
+  // Delete habit (offline-first)
+  public async deleteHabit(habitId: string): Promise<void> {
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error('User not authenticated');
+      // Soft delete locally
+      await this.db.deleteHabit(habitId);
 
-      const { error } = await supabase
-        .from('habits')
-        .update({ 
-          is_active: false,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', habitId)
-        .eq('user_id', user.id);
+      // Try to sync if online
+      if (this.isOnline()) {
+        try {
+          const { error } = await supabase
+            .from('habits')
+            .update({ is_active: false })
+            .eq('id', habitId);
 
-      if (error) throw error;
+          if (error) throw error;
+        } catch (syncError) {
+          console.error('Error syncing habit deletion:', syncError);
+          // Keep local deletion even if sync fails
+        }
+      }
     } catch (error) {
       console.error('Error deleting habit:', error);
       throw error;
     }
   }
 
-  // Toggle habit completion for today
-  async toggleHabitCompletion(habitId: string): Promise<HabitCompletion> {
+  // Update habit completion (offline-first)
+  public async updateHabitCompletion(habitId: string, count: number): Promise<void> {
+    const userId = await this.getCurrentUserId();
+    if (!userId) throw new Error('User not authenticated');
+
+    const today = new Date().toISOString().split('T')[0];
+    const now = new Date().toISOString();
+
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error('User not authenticated');
-
-      const today = new Date().toISOString().split('T')[0];
-
-      // Get the habit to know target count
-      const { data: habit, error: habitError } = await supabase
-        .from('habits')
-        .select('target_count')
-        .eq('id', habitId)
-        .eq('user_id', user.id)
-        .single();
-
-      if (habitError) throw habitError;
-      if (!habit) throw new Error('Habit not found');
-
       // Check if completion exists for today
-      const { data: existingCompletion, error: fetchError } = await supabase
-        .from('habit_completions')
-        .select('*')
-        .eq('habit_id', habitId)
-        .eq('completion_date', today)
-        .maybeSingle();
-
-      if (fetchError) throw fetchError;
-
-      let result: HabitCompletion;
+      const existingCompletion = await this.db.getCompletionByDate(habitId, userId, today);
 
       if (existingCompletion) {
-        // Update existing completion - toggle between 0 and target_count
-        const newCount = existingCompletion.completed_count >= habit.target_count 
-          ? 0 
-          : habit.target_count;
-
-        const { data, error } = await supabase
-          .from('habit_completions')
-          .update({ 
-            completed_count: newCount,
-            updated_at: new Date().toISOString()
-          })
-          .eq('id', existingCompletion.id)
-          .select()
-          .single();
-
-        if (error) throw error;
-        result = data as HabitCompletion;
+        // Update existing completion
+        await this.db.updateCompletion(existingCompletion.id, {
+          completed_count: count,
+          updated_at: now,
+          is_dirty: true,
+          sync_status: 'pending'
+        });
       } else {
         // Create new completion
-        const { data, error } = await supabase
-          .from('habit_completions')
-          .insert({
-            habit_id: habitId,
-            user_id: user.id,
-            completed_count: habit.target_count,
-            completion_date: today,
-            created_at: new Date().toISOString()
-          })
-          .select()
-          .single();
-
-        if (error) throw error;
-        result = data as HabitCompletion;
+        const completion: LocalCompletionRecord = {
+          id: uuid.v4() as string,
+          habit_id: habitId,
+          user_id: userId,
+          completed_count: count,
+          completion_date: today,
+          created_at: now,
+          updated_at: now,
+          is_dirty: true,
+          sync_status: 'pending'
+        };
+        
+        // Use upsert to handle any race conditions
+        await this.db.upsertCompletion(completion);
       }
 
-      return result;
-    } catch (error) {
-      console.error('Error toggling habit completion:', error);
-      throw error;
-    }
-  }
-
-  // Update habit completion count (for habits that can be partially completed)
-  async updateHabitCompletion(habitId: string, count: number): Promise<HabitCompletion> {
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error('User not authenticated');
-
-      const today = new Date().toISOString().split('T')[0];
-      const now = new Date().toISOString();
-
-      const { data, error } = await supabase
-        .from('habit_completions')
-        .upsert({
-          habit_id: habitId,
-          user_id: user.id,
-          completed_count: Math.max(0, count),
-          completion_date: today,
-          updated_at: now,
-          created_at: now
-        })
-        .select()
-        .single();
-
-      if (error) throw error;
-      return data as HabitCompletion;
+      // Try to sync if online
+      if (this.isOnline()) {
+        await this.syncCompletions();
+      }
     } catch (error) {
       console.error('Error updating habit completion:', error);
       throw error;
     }
   }
 
-  // Calculate streak for a habit
-  private async calculateStreak(habitId: string): Promise<number> {
+  // Toggle habit completion (convenience method)
+  public async toggleHabitCompletion(habitId: string): Promise<void> {
+    const userId = await this.getCurrentUserId();
+    if (!userId) throw new Error('User not authenticated');
+
     try {
-      const { data: completions, error } = await supabase
-        .from('habit_completions')
-        .select('completion_date, completed_count')
-        .eq('habit_id', habitId)
-        .gt('completed_count', 0)
-        .order('completion_date', { ascending: false })
-        .limit(100); // Get last 100 days to calculate streak
+      const habits = await this.db.getHabits(userId);
+      const habit = habits.find(h => h.id === habitId);
+      if (!habit) throw new Error('Habit not found');
 
-      if (error || !completions?.length) return 0;
+      const existingCompletion = await this.db.getTodayCompletion(habitId, userId);
+      const currentCount = existingCompletion?.completed_count || 0;
+      const newCount = currentCount >= habit.target_count ? 0 : habit.target_count;
 
-      let streak = 0;
-      let currentDate = new Date();
-      currentDate.setHours(0, 0, 0, 0);
-
-      for (const completion of completions) {
-        const completionDate = new Date(completion.completion_date);
-        completionDate.setHours(0, 0, 0, 0);
-        
-        const diffTime = currentDate.getTime() - completionDate.getTime();
-        const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-
-        if (diffDays === streak) {
-          streak++;
-          currentDate.setDate(currentDate.getDate() - 1);
-        } else if (diffDays > streak) {
-          break;
-        }
-      }
-
-      return streak;
+      await this.updateHabitCompletion(habitId, newCount);
     } catch (error) {
-      console.error('Error calculating streak:', error);
-      return 0;
+      console.error('Error toggling habit completion:', error);
+      throw error;
     }
   }
 
   // Get habit statistics
-  async getHabitStats(): Promise<HabitStats> {
+  public async getHabitStats(): Promise<HabitStats> {
+    const userId = await this.getCurrentUserId();
+    if (!userId) throw new Error('User not authenticated');
+
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error('User not authenticated');
-
+      const habits = await this.db.getHabits(userId);
       const today = new Date().toISOString().split('T')[0];
+      const completions = await this.db.getCompletions(userId, 30); // Last 30 days
 
-      // Get total active habits
-      const { count: totalHabits } = await supabase
-        .from('habits')
-        .select('*', { count: 'exact', head: true })
-        .eq('user_id', user.id)
-        .eq('is_active', true);
+      const totalHabits = habits.length;
+      const todayCompletions = completions.filter(c => c.completion_date === today);
+      const completedToday = todayCompletions.filter(c => {
+        const habit = habits.find(h => h.id === c.habit_id);
+        return habit && c.completed_count >= habit.target_count;
+      }).length;
 
-      // Get completed habits today with proper join
-      const { data: completionsToday } = await supabase
-        .from('habit_completions')
-        .select(`
-          id,
-          completed_count,
-          habits!inner(target_count, is_active)
-        `)
-        .eq('user_id', user.id)
-        .eq('completion_date', today)
-        .eq('habits.is_active', true);
+      // Calculate overall completion rate (last 30 days)
+      const last30Days:any = [];
+      for (let i = 0; i < 30; i++) {
+        const date = new Date();
+        date.setDate(date.getDate() - i);
+        last30Days.push(date.toISOString().split('T')[0]);
+      }
 
-      const completedToday = completionsToday?.filter(
-        completion => {
-          const habit = completion.habits as any;
-          return completion.completed_count >= habit.target_count;
-        }
-      ).length || 0;
+      let totalPossible = 0;
+      let totalCompleted = 0;
 
-      // Calculate completion rate for last 7 days
-      const sevenDaysAgo = new Date();
-      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+      habits.forEach(habit => {
+        last30Days.forEach((date:any) => {
+          const completion = completions.find(c => 
+            c.habit_id === habit.id && c.completion_date === date
+          );
+          totalPossible++;
+          if (completion && completion.completed_count >= habit.target_count) {
+            totalCompleted++;
+          }
+        });
+      });
 
-      const { data: recentCompletions } = await supabase
-        .from('habit_completions')
-        .select(`
-          completion_date,
-          completed_count,
-          habits!inner(target_count, is_active)
-        `)
-        .eq('user_id', user.id)
-        .gte('completion_date', sevenDaysAgo.toISOString().split('T')[0])
-        .eq('habits.is_active', true);
+      const completionRate = totalPossible > 0 ? (totalCompleted / totalPossible) * 100 : 0;
 
-      const completedInWeek = recentCompletions?.filter(
-        completion => {
-          const habit = completion.habits as any;
-          return completion.completed_count >= habit.target_count;
-        }
-      ).length || 0;
-
-      const possibleCompletions = (totalHabits || 0) * 7;
-      const completionRate = possibleCompletions > 0 
-        ? (completedInWeek / possibleCompletions) * 100 
-        : 0;
-
-      // Calculate active streak (consecutive days with at least one habit completed)
-      const activeStreak = await this.calculateActiveStreak();
+      // Calculate active streak (average across all habits)
+      const streaks = habits.map(habit => this.calculateStreak(habit.id, completions));
+      const activeStreak = streaks.length > 0 ? Math.round(streaks.reduce((a, b) => a + b, 0) / streaks.length) : 0;
 
       return {
-        totalHabits: totalHabits || 0,
+        totalHabits,
         completedToday,
         activeStreak,
         completionRate: Math.round(completionRate)
       };
     } catch (error) {
-      console.error('Error fetching habit stats:', error);
-      return {
-        totalHabits: 0,
-        completedToday: 0,
-        activeStreak: 0,
-        completionRate: 0
-      };
+      console.error('Error getting habit stats:', error);
+      throw error;
     }
   }
 
-  // Calculate active streak (consecutive days with at least one habit completed)
-  private async calculateActiveStreak(): Promise<number> {
+  // SYNC FUNCTIONALITY
+  public async syncHabits(): Promise<SyncResult> {
+    if (!this.isOnline()) {
+      return {
+        success: false,
+        synced_habits: 0,
+        synced_completions: 0,
+        conflicts: [],
+        errors: ['Device is offline']
+      };
+    }
+
+    const userId = await this.getCurrentUserId();
+    if (!userId) {
+      throw new Error('User not authenticated');
+    }
+
+    const result: SyncResult = {
+      success: true,
+      synced_habits: 0,
+      synced_completions: 0,
+      conflicts: [],
+      errors: []
+    };
+
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return 0;
+      // Sync habits
+      await this.syncHabitsToServer(result);
+      await this.syncHabitsFromServer(result);
 
-      // Get completions for the last 30 days, grouped by date
-      const thirtyDaysAgo = new Date();
-      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      // Sync completions
+      await this.syncCompletionsToServer(result);
+      await this.syncCompletionsFromServer(result);
 
-      const { data: completions, error } = await supabase
-        .from('habit_completions')
-        .select(`
-          completion_date,
-          completed_count,
-          habits!inner(target_count)
-        `)
-        .eq('user_id', user.id)
-        .gte('completion_date', thirtyDaysAgo.toISOString().split('T')[0])
-        .order('completion_date', { ascending: false });
+      console.log('Sync completed:', result);
+      return result;
+    } catch (error) {
+      console.error('Sync failed:', error);
+      result.success = false;
+      result.errors.push(error instanceof Error ? error.message : 'Unknown sync error');
+      return result;
+    }
+  }
 
-      if (error || !completions?.length) return 0;
+  private async syncHabitsToServer(result: SyncResult): Promise<void> {
+    const unsyncedHabits = await this.db.getUnsynced('habits') as LocalHabitRecord[];
+    
+    for (const habit of unsyncedHabits) {
+      try {
+        const habitData = {
+          id: habit.id,
+          user_id: habit.user_id,
+          title: habit.title,
+          icon: habit.icon,
+          description: habit.description,
+          category: habit.category,
+          target_count: habit.target_count,
+          target_unit: habit.target_unit,
+          frequency: habit.frequency,
+          bg_color: habit.bg_color,
+          is_active: habit.is_active,
+          created_at: habit.created_at,
+          updated_at: habit.updated_at
+        };
 
-      // Group by date and check if any habit was completed each day
-      const completionsByDate: Record<string, boolean> = {};
+        // Use upsert to handle both insert and update cases
+        const { error } = await supabase
+          .from('habits')
+          .upsert([habitData], {
+            onConflict: 'id'
+          });
+
+        if (error) throw error;
+
+        // Mark as synced
+        await this.db.markAsSynced('habits', habit.id);
+        result.synced_habits++;
+      } catch (error) {
+        console.error(`Error syncing habit ${habit.id}:`, error);
+        result.errors.push(`Failed to sync habit: ${habit.title}`);
+        // Mark as error
+        await this.db.updateHabit(habit.id, { sync_status: 'error' });
+      }
+    }
+  }
+
+  private async syncSingleHabit(habit: LocalHabitRecord): Promise<void> {
+    try {
+      const habitData = {
+        id: habit.id,
+        user_id: habit.user_id,
+        title: habit.title,
+        icon: habit.icon,
+        description: habit.description,
+        category: habit.category,
+        target_count: habit.target_count,
+        target_unit: habit.target_unit,
+        frequency: habit.frequency,
+        bg_color: habit.bg_color,
+        is_active: habit.is_active,
+        created_at: habit.created_at,
+        updated_at: habit.updated_at
+      };
+
+      // Use upsert instead of complex insert/update logic
+      const { error } = await supabase
+        .from('habits')
+        .upsert([habitData], {
+          onConflict: 'id'
+        });
+
+      if (error) throw error;
+
+      // Mark as synced
+      await this.db.markAsSynced('habits', habit.id);
+    } catch (error) {
+      // Mark as error
+      await this.db.updateHabit(habit.id, { sync_status: 'error' });
+      throw error;
+    }
+  }
+
+  private async syncHabitsFromServer(result: SyncResult): Promise<void> {
+    const userId = await this.getCurrentUserId();
+    if (!userId) return;
+
+    try {
+      const lastSyncTime = await this.db.getLastSyncTime();
       
-      completions.forEach(completion => {
-        const habit = completion.habits as any;
-        const isCompleted = completion.completed_count >= habit.target_count;
-        
-        if (isCompleted) {
-          completionsByDate[completion.completion_date] = true;
-        }
-      });
+      let query = supabase
+        .from('habits')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('is_active', true);
 
-      // Calculate streak
-      let streak = 0;
-      let currentDate = new Date();
-      currentDate.setHours(0, 0, 0, 0);
-
-      while (streak < 30) { // Max 30 days lookback
-        const dateStr = currentDate.toISOString().split('T')[0];
-        
-        if (completionsByDate[dateStr]) {
-          streak++;
-          currentDate.setDate(currentDate.getDate() - 1);
-        } else {
-          break;
-        }
+      if (lastSyncTime) {
+        query = query.gt('updated_at', lastSyncTime);
       }
 
-      return streak;
+      const { data: serverHabits, error } = await query;
+
+      if (error) throw error;
+
+      if (serverHabits) {
+        for (const serverHabit of serverHabits) {
+          const localHabits = await this.db.getHabits(userId);
+          const localHabit = localHabits.find(h => h.id === serverHabit.id);
+
+          if (!localHabit) {
+            // New habit from server
+            await this.db.insertHabit({
+              ...serverHabit,
+              sync_status: 'synced',
+              is_dirty: false,
+              last_synced_at: new Date().toISOString()
+            });
+            result.synced_habits++;
+          } else if (new Date(serverHabit.updated_at) > new Date(localHabit.updated_at)) {
+            // Server version is newer
+            const conflictedFields = this.findConflictedFields(localHabit, serverHabit);
+            
+            if (localHabit.is_dirty && conflictedFields.length > 0) {
+              // Conflict detected
+              await this.db.updateHabit(localHabit.id, {
+                conflict: true,
+                conflict_data: {
+                  local_version: localHabit,
+                  remote_version: serverHabit,
+                  conflicted_fields
+                },
+                sync_status: 'conflict'
+              });
+              result.conflicts.push(localHabit);
+            } else {
+              // Update local with server version
+              await this.db.insertHabit({
+                ...serverHabit,
+                sync_status: 'synced',
+                is_dirty: false,
+                last_synced_at: new Date().toISOString()
+              });
+              result.synced_habits++;
+            }
+          }
+        }
+      }
     } catch (error) {
-      console.error('Error calculating active streak:', error);
-      return 0;
+      console.error('Error syncing habits from server:', error);
+      throw error;
     }
   }
 
-  // Get habit history for analytics
-  async getHabitHistory(habitId: string, days: number = 30): Promise<HabitCompletion[]> {
+  private async syncCompletions(): Promise<void> {
+    if (!this.isOnline()) return;
+
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error('User not authenticated');
+      await this.syncCompletionsToServer();
+      await this.syncCompletionsFromServer();
+    } catch (error) {
+      console.error('Error syncing completions:', error);
+    }
+  }
 
-      const startDate = new Date();
-      startDate.setDate(startDate.getDate() - days);
+  private async syncCompletionsToServer(result?: SyncResult): Promise<void> {
+    const unsyncedCompletions = await this.db.getUnsynced('habit_completions') as LocalCompletionRecord[];
+    
+    for (const completion of unsyncedCompletions) {
+      try {
+        const completionData = {
+          id: completion.id,
+          habit_id: completion.habit_id,
+          user_id: completion.user_id,
+          completed_count: completion.completed_count,
+          completion_date: completion.completion_date,
+          notes: completion.notes,
+          created_at: completion.created_at,
+          updated_at: completion.updated_at
+        };
 
-      const { data, error } = await supabase
+        // Use upsert with the unique constraint fields
+        const { error } = await supabase
+          .from('habit_completions')
+          .upsert([completionData], {
+            onConflict: 'habit_id,completion_date'
+          });
+
+        if (error) throw error;
+
+        // Mark as synced
+        await this.db.markAsSynced('habit_completions', completion.id);
+        if (result) result.synced_completions++;
+      } catch (error) {
+        console.error(`Error syncing completion ${completion.id}:`, error);
+        if (result) result.errors.push(`Failed to sync completion for ${completion.completion_date}`);
+        // Mark completion as error
+        await this.db.updateCompletion(completion.id, { sync_status: 'error' });
+      }
+    }
+  }
+
+  private async syncCompletionsFromServer(result?: SyncResult): Promise<void> {
+    const userId = await this.getCurrentUserId();
+    if (!userId) return;
+
+    try {
+      const lastSyncTime = await this.db.getLastSyncTime();
+      
+      let query = supabase
         .from('habit_completions')
         .select('*')
-        .eq('habit_id', habitId)
-        .eq('user_id', user.id)
-        .gte('completion_date', startDate.toISOString().split('T')[0])
-        .order('completion_date', { ascending: false });
+        .eq('user_id', userId);
 
-      if (error) throw error;
-      return (data || []) as HabitCompletion[];
-    } catch (error) {
-      console.error('Error fetching habit history:', error);
-      throw error;
-    }
-  }
+      if (lastSyncTime) {
+        query = query.gt('updated_at', lastSyncTime);
+      }
 
-  // Batch update multiple habits (useful for bulk operations)
-  async batchUpdateHabits(updates: Array<{ id: string; data: UpdateHabitRequest }>): Promise<void> {
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error('User not authenticated');
-
-      const promises = updates.map(update => 
-        supabase
-          .from('habits')
-          .update({
-            ...update.data,
-            updated_at: new Date().toISOString()
-          })
-          .eq('id', update.id)
-          .eq('user_id', user.id)
-      );
-
-      await Promise.all(promises);
-    } catch (error) {
-      console.error('Error batch updating habits:', error);
-      throw error;
-    }
-  }
-
-  // Get habits summary for a specific date range
-  async getHabitsSummary(startDate: string, endDate: string): Promise<{
-    totalCompletions: number;
-    averageCompletionRate: number;
-    mostConsistentHabit: string | null;
-    streakData: Array<{ date: string; completedHabits: number }>;
-  }> {
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error('User not authenticated');
-
-      const { data: completions, error } = await supabase
-        .from('habit_completions')
-        .select(`
-          *,
-          habits!inner(name, target_count)
-        `)
-        .eq('user_id', user.id)
-        .gte('completion_date', startDate)
-        .lte('completion_date', endDate);
+      const { data: serverCompletions, error } = await query;
 
       if (error) throw error;
 
-      const totalCompletions = completions?.length || 0;
-      
-      // Calculate average completion rate and other metrics
-      const completionsByDate: Record<string, number> = {};
-      const habitCompletions: Record<string, number> = {};
-      
-      completions?.forEach(completion => {
-        const habit = completion.habits as any;
-        const isCompleted = completion.completed_count >= habit.target_count;
-        
-        if (isCompleted) {
-          completionsByDate[completion.completion_date] = (completionsByDate[completion.completion_date] || 0) + 1;
-          habitCompletions[habit.name] = (habitCompletions[habit.name] || 0) + 1;
+      if (serverCompletions) {
+        for (const serverCompletion of serverCompletions) {
+          await this.db.upsertCompletion({
+            ...serverCompletion,
+            sync_status: 'synced',
+            is_dirty: false,
+            last_synced_at: new Date().toISOString()
+          });
+          if (result) result.synced_completions++;
         }
-      });
-
-      const streakData = Object.entries(completionsByDate).map(([date, count]) => ({
-        date,
-        completedHabits: count
-      }));
-
-      const mostConsistentHabit = Object.entries(habitCompletions).reduce(
-        (max, [name, count]) => count > max.count ? { name, count } : max,
-        { name: null as string | null, count: 0 }
-      ).name;
-
-      const days = Math.ceil((new Date(endDate).getTime() - new Date(startDate).getTime()) / (1000 * 60 * 60 * 24)) + 1;
-      const averageCompletionRate = totalCompletions / days;
-
-      return {
-        totalCompletions,
-        averageCompletionRate,
-        mostConsistentHabit,
-        streakData
-      };
+      }
     } catch (error) {
-      console.error('Error getting habits summary:', error);
+      console.error('Error syncing completions from server:', error);
       throw error;
     }
+  }
+
+  private findConflictedFields(local: any, remote: any): string[] {
+    const conflictedFields: string[] = [];
+    const fieldsToCheck = ['title', 'icon', 'description', 'category', 'target_count', 'target_unit', 'frequency', 'bg_color'];
+
+    for (const field of fieldsToCheck) {
+      if (local[field] !== remote[field]) {
+        conflictedFields.push(field);
+      }
+    }
+
+    return conflictedFields;
+  }
+
+  // Conflict resolution
+  public async resolveConflict(habitId: string, resolution: 'local' | 'remote'): Promise<void> {
+    const userId = await this.getCurrentUserId();
+    if (!userId) throw new Error('User not authenticated');
+
+    try {
+      const habits = await this.db.getHabits(userId);
+      const habit = habits.find(h => h.id === habitId);
+      
+      if (!habit || !habit.conflict_data) {
+        throw new Error('No conflict found for this habit');
+      }
+
+      if (resolution === 'local') {
+        // Keep local version, sync to server
+        await this.db.updateHabit(habitId, {
+          conflict_data: undefined,
+          sync_status: 'pending',
+          is_dirty: true
+        });
+        
+        if (this.isOnline()) {
+          await this.syncSingleHabit(habit);
+        }
+      } else {
+        // Use remote version
+        const remoteVersion = habit.conflict_data.remote_version;
+        await this.db.insertHabit({
+          ...habit,
+          ...remoteVersion,
+          conflict_data: undefined,
+          sync_status: 'synced',
+          is_dirty: false,
+          last_synced_at: new Date().toISOString()
+        });
+      }
+    } catch (error) {
+      console.error('Error resolving conflict:', error);
+      throw error;
+    }
+  }
+
+  // Utility methods
+  private async getCurrentUserId(): Promise<string | null> {
+    const { data: { user } } = await supabase.auth.getUser();
+    return user?.id || null;
+  }
+
+  public getNetworkStatus(): NetworkStatus {
+    return this.networkStatus;
+  }
+
+  public async clearAllData(): Promise<void> {
+    await this.db.clearAllData();
   }
 }
-
-export const habitService = new HabitService();

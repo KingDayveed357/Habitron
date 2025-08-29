@@ -8,6 +8,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
+  StyleSheet,
   Image,
   Alert,
 } from 'react-native';
@@ -19,6 +20,8 @@ import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
 import { icons } from '@/constants/icons';
 import { AuthService } from '@/services/auth';
 import DevResetButton from '../components/DevResetButton';
+import BackButton from '../components/ui/BackButton';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface Props {
   onLoginSuccess?: (userEmail: string) => void;
@@ -27,6 +30,7 @@ interface Props {
 
 export default function SignIn({ onLoginSuccess, onForgotPassword }: Props) {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -215,23 +219,24 @@ export default function SignIn({ onLoginSuccess, onForgotPassword }: Props) {
   };
 
   return (
-    <SafeAreaView className="flex-1 app-background relative">
-      {/* <DevResetButton /> */}
+    <SafeAreaView style={[styles.container, { paddingTop: insets.top }]} className="flex-1 app-background relative">
+      <DevResetButton />
+      {/* <BackButton onPress={() => router.back()} /> */}
       <KeyboardAvoidingView 
         behavior={Platform.OS === 'ios' ? 'padding' : undefined} 
         keyboardVerticalOffset={80}
-        className="flex-1"
+        className="flex-1 "
       >
         {/* Back Button */}
         <TouchableOpacity
           onPress={() => router.back()}
-          className="top-5 left-4 z-10 p-2 rounded-full"
+          className=" left-4 z-10 p-2 rounded-full"
         >
           <FontAwesome6 name="arrow-left" size={20} color="#333" />
         </TouchableOpacity>
 
         <ScrollView 
-          className="flex-grow px-6 pt-10 pb-24"
+          className="flex-grow px-6 pt-4 pb-24"
           contentContainerStyle={{ paddingBottom: 100 }}
         >
           <Text className="text-heading text-3xl mb-2">Welcome Back 👋</Text>
@@ -289,7 +294,7 @@ export default function SignIn({ onLoginSuccess, onForgotPassword }: Props) {
               </Text>
             </TouchableOpacity>
             
-            <TouchableOpacity onPress={handleForgotPassword} className='my-auto'>
+            <TouchableOpacity onPress={() => router.push('/auth/forgotpassword')} className='my-auto'>
               <Text className='text-body text-primary'>Forgot Password?</Text>
             </TouchableOpacity>
           </View>
@@ -399,3 +404,11 @@ export default function SignIn({ onLoginSuccess, onForgotPassword }: Props) {
     </SafeAreaView>
   );
 }
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    position: 'relative',
+  },
+
+})

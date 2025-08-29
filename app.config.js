@@ -27,7 +27,7 @@ export default {
       favicon: './assets/images/lifestyle.png',
     },
     plugins: [
-     
+     "expo-sqlite",
       'expo-router',
       [
         'expo-splash-screen',

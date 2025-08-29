@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Stack } from "expo-router";
 
 import {
@@ -20,6 +20,7 @@ import { CheckIcon } from 'lucide-react-native';
 import { CreateHabitRequest, HABIT_FREQUENCIES, HABIT_COLORS } from '@/types/habit';
 import { useHabits } from '@/hooks/usehabits';
 import { useAuth } from '@/hooks/useAuth';
+import { useAICoach } from '@/hooks/useAICoach';
 
 // Icon collections
 const BASIC_ICONS = ['💧', '📚', '🏃', '🧘', '🍎', '💪', '🌱', '🎯', '✍️', '🎨'];
@@ -110,17 +111,6 @@ const HABIT_CATEGORIES = [
   'General'
 ];
 
-const AI_SUGGESTIONS = [
-  'Drink 8 glasses of water',
-  'Read for 30 minutes',
-  'Exercise for 20 minutes',
-  'Meditate for 10 minutes',
-  'Write in journal',
-  'Take a 10-minute walk',
-  'Practice gratitude',
-  'Eat a healthy breakfast'
-];
-
 interface FrequencySettings {
   dailyDays: string[];
   weeklyCount: number;
@@ -151,6 +141,15 @@ const CreateHabitScreen = () => {
   const [customCategory, setCustomCategory] = useState('');
   const [isAddingCategory, setIsAddingCategory] = useState(false);
   const [categories, setCategories] = useState(HABIT_CATEGORIES);
+
+   const { suggestions, generateSuggestions, loadingSuggestions } = useAICoach();
+
+   useEffect(() => {
+    if (suggestions.length === 0) {
+      generateSuggestions();
+    }
+  }, []);
+
   
   // Frequency settings
   const [frequencySettings, setFrequencySettings] = useState<FrequencySettings>({
@@ -390,29 +389,61 @@ const CreateHabitScreen = () => {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        {/* AI Suggestions */}
-        <View className="bg-blue-50 dark:bg-gray-800 border border-blue-200 dark:border-gray-700 rounded-2xl p-4 mx-4 mt-4 mb-6">
-          <View className="flex-row items-center mb-2">
-            <Text className="text-2xl mr-2">🤖</Text>
-            <Text className="text-lg font-semibold text-gray-800 dark:text-white">AI Suggestions</Text>
+        {/* AI Suggestions - Only show if we have suggestions */}
+        {suggestions.length > 0 && (
+          <View className="bg-blue-50 dark:bg-gray-800 border border-blue-200 dark:border-gray-700 rounded-2xl p-4 mx-4 mt-4 mb-6">
+            <View className="flex-row items-center justify-between mb-2">
+              <View className="flex-row items-center">
+                <Text className="text-2xl mr-2">🤖</Text>
+                <Text className="text-lg font-semibold text-gray-800 dark:text-white">AI Suggestions</Text>
+              </View>
+              {loadingSuggestions && <ActivityIndicator size="small" color="#6366F1" />}
+            </View>
+            <Text className="text-gray-600 dark:text-gray-400 mb-4">
+              Based on your goals and current habits, here are some recommendations:
+            </Text>
+            <View className="flex-row flex-wrap gap-2">
+              {suggestions.slice(0, 6).map((suggestion, index) => {
+                const title = typeof suggestion === 'string' ? suggestion : suggestion.title;
+                return (
+                  <TouchableOpacity 
+                    key={index}
+                    className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-600 rounded-full px-4 py-2"
+                    onPress={() => {
+                      if (typeof suggestion === 'string') {
+                        setFormData({ ...formData, title: suggestion });
+                      } else {
+                        setFormData({
+                          ...formData,
+                          title: suggestion.title,
+                          icon: suggestion.icon,
+                          category: suggestion.category,
+                          description: suggestion.description,
+                          target_count: suggestion.targetCount,
+                          target_unit: suggestion.targetUnit
+                        });
+                      }
+                    }}
+                  >
+                    <Text className="text-sm text-gray-700 dark:text-gray-300">{title}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
           </View>
-          <Text className="text-gray-600 dark:text-gray-400 mb-4">
-            Based on your goals and current habits, here are some recommendations:
-          </Text>
-          <View className="flex-row flex-wrap gap-2">
-            {AI_SUGGESTIONS.map((suggestion, index) => (
-              <TouchableOpacity 
-                key={index}
-                className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-600 rounded-full px-4 py-2"
-                onPress={() => setFormData({ ...formData, title: suggestion })}
-              >
-                <Text className="text-sm text-gray-700 dark:text-gray-300">{suggestion}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
+        )}
 
-        <View className="px-4">
+        {/* Loading state for AI Suggestions when no suggestions yet */}
+        {loadingSuggestions && suggestions.length === 0 && (
+          <View className="bg-blue-50 dark:bg-gray-800 border border-blue-200 dark:border-gray-700 rounded-2xl p-4 mx-4 mt-4 mb-6">
+            <View className="flex-row items-center justify-center">
+              <ActivityIndicator size="small" color="#6366F1" className="mr-2" />
+              <Text className="text-gray-600 dark:text-gray-400">Loading personalized suggestions...</Text>
+            </View>
+          </View>
+        )}
+
+        <View className="px-4 mt-4">
           {/* Habit Name */}
           <View className="mb-6">
             <Text className="text-lg font-semibold text-gray-800 dark:text-white mb-2">
@@ -569,25 +600,6 @@ const CreateHabitScreen = () => {
                     setFormData({ ...formData, target_count: Math.max(1, Math.min(100, num)) });
                   }}
                   placeholder="1"
-                  placeholderTextColor="#9CA3AF"
-                  className={`border rounded-xl p-4 text-gray-800 dark:text-white dark:bg-gray-800 ${
-                    errors.target_count 
-                      ? 'border-red-500 bg-red-50 dark:bg-red-900/20' 
-                      : 'border-gray-300 dark:border-gray-600 bg-gray-100'
-                  }`}
-                  keyboardType="numeric"
-                  editable={!loading}
-                />
-              </View>
-              
-              <View className="flex-1">
-                <Text className="text-gray-700 dark:text-gray-300 font-semibold mb-2">
-                  Unit {errors.target_unit && <Text className="text-red-500">*</Text>}
-                </Text>
-                <TextInput
-                  value={formData.target_unit}
-                  onChangeText={(text) => setFormData({ ...formData, target_unit: text })}
-                  placeholder="times"
                   placeholderTextColor="#9CA3AF"
                   className={`border rounded-xl p-4 text-gray-800 dark:text-white dark:bg-gray-800 ${
                     errors.target_unit 
@@ -955,4 +967,4 @@ const CreateHabitScreen = () => {
   );
 };
 
-export default CreateHabitScreen;
+export default CreateHabitScreen; 

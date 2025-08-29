@@ -1,3 +1,5 @@
+// screens/layout.tsx
+
 import { Stack } from 'expo-router';
 import { StatusBar, useColorScheme } from 'react-native';
 
@@ -19,7 +21,16 @@ export default function ScreensLayout() {
           headerTintColor: colorScheme === 'dark' ? '#FFFFFF' : '#000000',  // Back button and icons
           headerTitleAlign: 'center',
         }}
-      />
+      >
+        <Stack.Screen 
+          name="ai-chat" 
+          options={{ 
+            headerShown: false 
+          }} 
+        />
+</Stack>
+
+      
     </>
   );
 }

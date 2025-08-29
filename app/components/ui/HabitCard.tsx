@@ -1,9 +1,13 @@
-import { View, Text, TouchableOpacity } from 'react-native'
+//components/ui/HabitCard.tsx
+
+import { View, Text, TouchableOpacity, Pressable } from 'react-native'
 import React from 'react'
 import { useRouter } from 'expo-router'
+import { Ionicons } from '@expo/vector-icons'
+import { SkeletonHabitCard } from './SkeletonHabitCard'
 
 interface Habit {
-  id: string // Changed from number to string to match Supabase UUID
+  id: string
   title: string
   icon: string
   completed: number
@@ -11,29 +15,35 @@ interface Habit {
   streak: number
   isCompleted: boolean
   progress: number
-  bg_color?: string // Tailwind class like 'bg-green-500'
+  bg_color?: string
   category?: string
-  name?: string // Alternative field name from Supabase
+  name?: string
+  conflict?: boolean
 }
 
 interface HabitCardProps {
   habit: Habit
-  onToggle: (habitId: string) => void // Updated to match string ID
+  onToggle: (habitId: string) => void
   isLast?: boolean
+  isLoading?: boolean
 }
 
-const HabitCard: React.FC<HabitCardProps> = ({ habit, onToggle, isLast = false }) => {
+const HabitCard: React.FC<HabitCardProps> = ({ habit, onToggle, isLast = false, isLoading = false }) => {
   const router = useRouter()
+
+
+  if (isLoading) {
+    return <SkeletonHabitCard isLast={isLast} />
+  }
 
   const handleCardPress = () => {
     router.push(`/screens/habit_details?id=${habit.id}`)
   }
 
-  // Helper function to determine if a Tailwind color is light
+  
   const isLightColor = (bgClass: string): boolean => {
     if (!bgClass) return true
     
-    // Light colors that need dark text
     const lightColors = [
       'bg-white', 'bg-gray-100', 'bg-gray-200', 'bg-gray-300',
       'bg-yellow-100', 'bg-yellow-200', 'bg-yellow-300', 'bg-yellow-400',
@@ -64,7 +74,6 @@ const HabitCard: React.FC<HabitCardProps> = ({ habit, onToggle, isLast = false }
 
   const getProgressColor = () => {
     if (habit.bg_color) {
-      // Use a darker shade or contrasting color for progress bar
       return 'bg-white/40'
     }
     return habit.isCompleted ? 'bg-green-500' : 'bg-indigo-500'
@@ -97,76 +106,106 @@ const HabitCard: React.FC<HabitCardProps> = ({ habit, onToggle, isLast = false }
 
   const getToggleButtonStyle = () => {
     if (habit.isCompleted) {
-      return 'bg-white/90'
+      return 'bg-green-500 shadow-lg'
     }
     
     if (habit.bg_color) {
       return isLightColor(habit.bg_color) 
-        ? 'bg-gray-300' 
-        : 'bg-white/20'
+        ? 'bg-gray-300 border-2 border-gray-400' 
+        : 'bg-white/20 border-2 border-white/40'
     }
     
-    return 'bg-gray-200 dark:bg-gray-700'
+    return 'bg-gray-200 dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600'
   }
 
-  const getToggleButtonTextColor = () => {
-    if (habit.isCompleted) {
-      return 'text-green-600'
-    }
-    
-    if (habit.bg_color && !isLightColor(habit.bg_color)) {
-      return 'text-white'
-    }
-    
-    return 'text-gray-600 dark:text-gray-300'
-  }
+  
+  const habitName = habit.name || habit.title || 'Untitled Habit'
+  const completedCount = habit.completed || 0
+  const totalCount = habit.total || 1
+  const streakCount = habit.streak || 0
+  const categoryName = habit.category || ''
+  const progressValue = habit.progress || 0
 
   return (
     <View className={`${!isLast ? 'mb-4' : ''}`}>
-      <TouchableOpacity 
-        className={`${getBackgroundColorClass()} rounded-xl p-4 shadow-sm border border-gray-100 dark:border-gray-800`}
-        onPress={handleCardPress}
-        activeOpacity={0.7}
-      >
-        <View className="flex-row items-center justify-between mb-3">
-          <View className="flex-row items-center flex-1">
-            <Text className="text-2xl mr-3">{habit.icon}</Text>
-            <View className="flex-1">
-              <Text className={`text-base font-semibold ${getTextColor()} mb-1`}>
-                {habit.name || habit.title}
-              </Text>
-              {habit.category && (
-                <Text className={`text-xs ${getSubTextColor()} mb-1`}>
-                  {habit.category}
-                </Text>
-              )}
-              <Text className={`text-sm ${getSubTextColor()}`}>
-                {habit.completed}/{habit.total} completed • {habit.streak} day streak
+      
+      <View className={`${getBackgroundColorClass()} rounded-xl shadow-sm border border-gray-100 dark:border-gray-800 overflow-hidden`}>
+        
+        
+        {habit.conflict && (
+          <View className="bg-amber-100 dark:bg-amber-900/30 px-3 py-2 border-b border-amber-200 dark:border-amber-700">
+            <View className="flex-row items-center">
+              <Ionicons name="warning" size={16} color="#D97706" />
+              <Text className="text-amber-700 dark:text-amber-300 text-xs font-medium ml-2">
+                Sync conflict - tap to resolve
               </Text>
             </View>
           </View>
-          
-          <TouchableOpacity 
-            className={`w-8 h-8 rounded-full items-center justify-center ${getToggleButtonStyle()}`}
-            onPress={(e) => {
-              e.stopPropagation() // Prevent card navigation when toggling
-              onToggle(habit.id)
-            }}
-          >
-            {habit.isCompleted && (
-              <Text className={`text-sm font-bold ${getToggleButtonTextColor()}`}>✓</Text>
-            )}
-          </TouchableOpacity>
-        </View>
+        )}
         
-        {/* Progress Bar */}
-        <View className={`${getProgressBarBackground()} rounded-full h-2`}>
-          <View 
-            className={`rounded-full h-2 ${getProgressColor()}`}
-            style={{ width: `${habit.progress * 100}%` }}
-          />
-        </View>
-      </TouchableOpacity>
+       
+        <Pressable 
+          onPress={handleCardPress}
+          className="flex-1"
+          android_ripple={{ color: 'rgba(0,0,0,0.1)' }}
+        >
+          <View className="p-4 pr-20"> 
+            <View className="flex-row items-center mb-3">
+              <Text className="text-2xl mr-3">{habit.icon}</Text>
+              <View className="flex-1">
+                <Text className={`text-base font-semibold ${getTextColor()} mb-1`}>
+                  {habitName}
+                </Text>
+                {categoryName.length > 0 && (
+                  <Text className={`text-xs ${getSubTextColor()} mb-1`}>
+                    {categoryName}
+                  </Text>
+                )}
+                <Text className={`text-sm ${getSubTextColor()}`}>
+                  {`${completedCount}/${totalCount} completed • ${streakCount} day streak`}
+                </Text>
+              </View>
+            </View>
+            
+        
+            <View className={`${getProgressBarBackground()} rounded-full h-2`}>
+              <View 
+                className={`rounded-full h-2 ${getProgressColor()} transition-all duration-300`}
+                style={{ width: `${Math.min(progressValue * 100, 100)}%` }}
+              />
+            </View>
+          </View>
+        </Pressable>
+
+   
+        <TouchableOpacity 
+          className={`absolute right-3 top-1/2 w-14 h-14 rounded-full items-center justify-center ${getToggleButtonStyle()} transform -translate-y-7`}
+          onPress={() => onToggle(habit.id)}
+          activeOpacity={0.7}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        >
+          {habit.isCompleted ? (
+            <Ionicons name="checkmark" size={24} color="white" />
+          ) : (
+            <View className={`w-7 h-7 rounded-full border-2 ${
+              habit.bg_color && !isLightColor(habit.bg_color) 
+                ? 'border-white/60' 
+                : 'border-gray-400 dark:border-gray-500'
+            }`} />
+          )}
+        </TouchableOpacity>
+
+       
+        {habit.isCompleted && (
+          <View className="absolute top-3 right-20">
+            <View className="bg-green-100 dark:bg-green-900/30 px-2 py-1 rounded-full">
+              <Text className="text-green-700 dark:text-green-400 text-xs font-medium">
+                Complete
+              </Text>
+            </View>
+          </View>
+        )}
+      </View>
     </View>
   )
 }

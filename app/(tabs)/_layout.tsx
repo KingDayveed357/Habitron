@@ -1,3 +1,4 @@
+// (tabs)/_layout.tsx
 import React from 'react';
 import {
   View,
@@ -95,7 +96,9 @@ const TabLayout = () => {
         options={{
           title: 'AI Coach',
           tabBarIcon: ({ focused }) => <TabIcon name="chatbubble-ellipses-outline" focused={focused} />,
+           headerShown: false 
         }}
+        
       />
       <Tabs.Screen
         name="mood_stat"
