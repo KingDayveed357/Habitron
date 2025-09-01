@@ -3,7 +3,7 @@ import { LocalHabitRecord, LocalCompletionRecord } from '@/types/habit';
 import type { SQLiteDatabase } from 'expo-sqlite';
 
 export class DatabaseService {
-  private db: SQLiteDatabase;
+  public db: SQLiteDatabase;
 
   constructor(database: SQLiteDatabase) {
     this.db = database;

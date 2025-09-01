@@ -1,4 +1,4 @@
-// screens/layout.tsx
+// /app/screens/layout.tsx
 
 import { Stack } from 'expo-router';
 import { StatusBar, useColorScheme } from 'react-native';
@@ -24,6 +24,12 @@ export default function ScreensLayout() {
       >
         <Stack.Screen 
           name="ai-chat" 
+          options={{ 
+            headerShown: false 
+          }} 
+        />
+         <Stack.Screen 
+          name="mood_history" 
           options={{ 
             headerShown: false 
           }} 

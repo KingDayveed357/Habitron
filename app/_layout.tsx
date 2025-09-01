@@ -55,12 +55,58 @@ async function initializeDatabase(db: any) {
         FOREIGN KEY (habit_id) REFERENCES habits (id) ON DELETE CASCADE
       );
 
+      -- Mood entries table
+      CREATE TABLE IF NOT EXISTS mood_entries (
+        local_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT UNIQUE NOT NULL,
+        user_id TEXT NOT NULL,
+        mood_score INTEGER NOT NULL CHECK (mood_score >= 1 AND mood_score <= 10),
+        emoji TEXT NOT NULL,
+        notes TEXT,
+        entry_date TEXT NOT NULL,
+        entry_time TEXT,
+        energy_level INTEGER CHECK (energy_level >= 1 AND energy_level <= 10),
+        stress_level INTEGER CHECK (stress_level >= 1 AND stress_level <= 10),
+        sleep_hours REAL,
+        sleep_quality INTEGER CHECK (sleep_quality >= 1 AND sleep_quality <= 10),
+        weather TEXT,
+        location TEXT,
+        tags TEXT, -- JSON string for array
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        last_synced_at TEXT,
+        is_dirty INTEGER NOT NULL DEFAULT 0,
+        sync_status TEXT NOT NULL DEFAULT 'synced' CHECK (sync_status IN ('synced', 'pending', 'conflict', 'error')),
+        conflict_data TEXT,
+        
+        CONSTRAINT unique_user_date UNIQUE (user_id, entry_date)
+      );
+
+      -- Mood patterns cache table
+      CREATE TABLE IF NOT EXISTS mood_patterns (
+        local_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT UNIQUE NOT NULL,
+        user_id TEXT NOT NULL,
+        pattern_type TEXT NOT NULL,
+        pattern_data TEXT NOT NULL, -- JSON string
+        confidence_score REAL,
+        start_date TEXT NOT NULL,
+        end_date TEXT NOT NULL,
+        is_active INTEGER DEFAULT 1,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
       -- Create indexes for performance
       CREATE INDEX IF NOT EXISTS idx_habits_user_id ON habits(user_id);
       CREATE INDEX IF NOT EXISTS idx_habits_updated_at ON habits(updated_at);
       CREATE INDEX IF NOT EXISTS idx_habit_completions_habit_id ON habit_completions(habit_id);
       CREATE INDEX IF NOT EXISTS idx_habit_completions_date ON habit_completions(completion_date);
       CREATE INDEX IF NOT EXISTS idx_habit_completions_user_date ON habit_completions(user_id, completion_date);
+      CREATE INDEX IF NOT EXISTS idx_mood_entries_user_date ON mood_entries(user_id, entry_date DESC);
+      CREATE INDEX IF NOT EXISTS idx_mood_entries_user_created ON mood_entries(user_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_mood_entries_mood_score ON mood_entries(mood_score);
+      CREATE INDEX IF NOT EXISTS idx_mood_patterns_user_type ON mood_patterns(user_id, pattern_type);
       
       -- Add unique constraint for habit completions to prevent duplicates
       CREATE UNIQUE INDEX IF NOT EXISTS idx_habit_completions_unique 
@@ -107,12 +153,36 @@ async function cleanupDuplicateCompletions(db: any) {
       `, [userId, userId]);
     }
 
-    // Get count of remaining completions
-    const result = await db.getFirstAsync(`
+    // Clean up any duplicate mood entries as well
+    const moodUsers = await db.getAllAsync(`
+      SELECT DISTINCT user_id FROM mood_entries
+    `);
+
+    for (const user of moodUsers) {
+      const userId = user.user_id;
+      
+      // Remove duplicate mood entries for each user (keep most recent)
+      await db.runAsync(`
+        DELETE FROM mood_entries 
+        WHERE local_id NOT IN (
+          SELECT MAX(local_id) 
+          FROM mood_entries 
+          WHERE user_id = ?
+          GROUP BY user_id, entry_date
+        ) AND user_id = ?
+      `, [userId, userId]);
+    }
+
+    // Get count of remaining completions and mood entries
+    const completionsResult = await db.getFirstAsync(`
       SELECT COUNT(*) as count FROM habit_completions
     `);
     
-    console.log(`Cleanup completed. Remaining completions: ${result?.count || 0}`);
+    const moodResult = await db.getFirstAsync(`
+      SELECT COUNT(*) as count FROM mood_entries
+    `);
+    
+    console.log(`Cleanup completed. Remaining completions: ${completionsResult?.count || 0}, mood entries: ${moodResult?.count || 0}`);
   } catch (error) {
     console.error('Error during duplicate cleanup:', error);
     throw error;
