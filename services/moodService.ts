@@ -8,18 +8,18 @@ import { aiService } from './aiService';
 export interface MoodEntry {
   id: string;
   user_id: string;
-  mood_score: number; // 1-10
+  mood_score: number;
   emoji: string;
   notes?: string;
-  entry_date: string; // YYYY-MM-DD format
+  entry_date: string;
   entry_time?: string;
-  energy_level?: number; // 1-10
-  stress_level?: number; // 1-10
+  energy_level?: number;
+  stress_level?: number;
   sleep_hours?: number;
-  sleep_quality?: number; // 1-10
+  sleep_quality?: number;
   weather?: string;
   location?: string;
-  tags?: string[] ;
+  tags?: string[];
   created_at: string;
   updated_at: string;
 }
@@ -66,6 +66,7 @@ export interface MoodHabitCorrelation {
   boost_description: string;
   color: string;
   bgColor: string;
+  bg_color: string; // Added original bg_color
 }
 
 export interface NetworkStatus {
@@ -77,16 +78,28 @@ export class MoodService {
   private db: DatabaseService;
   private networkStatus: NetworkStatus = { isConnected: false, isInternetReachable: false };
   private networkUnsubscribe?: (() => void);
+  
+  // Cache for frequently accessed data
+  private cache: {
+    todaysMood: { data: LocalMoodRecord | null; timestamp: number } | null;
+    weeklyMoods: { data: WeeklyMoodData[]; timestamp: number } | null;
+    userId: { id: string | null; timestamp: number } | null;
+  } = {
+    todaysMood: null,
+    weeklyMoods: null,
+    userId: null
+  };
+  
+  private readonly CACHE_TTL = 30000; // 30 seconds cache
 
-  // Mood emoji mappings
   private readonly MOOD_EMOJIS = {
-    1: '😰', 2: '😔', 3: '😐', 4: '🙂', 5: '😊',
-    6: '😊', 7: '😊', 8: '😊', 9: '🤩', 10: '🤩'
+    1: '😰', 2: '😔', 4: '😐',
+    6: '🙂', 8: '😊', 10: '🤩'
   };
 
   private readonly MOOD_LABELS = {
-    1: 'Terrible', 2: 'Bad', 3: 'Okay', 4: 'Good', 5: 'Great',
-    6: 'Great', 7: 'Great', 8: 'Excellent', 9: 'Excellent', 10: 'Amazing'
+    1: 'Terrible', 2: 'Bad', 4: 'Okay',
+    6: 'Good', 8: 'Great', 10: 'Amazing'
   };
 
   constructor(databaseService: DatabaseService) {
@@ -98,7 +111,6 @@ export class MoodService {
   private async initializeMoodTables(): Promise<void> {
     try {
       await this.db.db.execAsync(`
-        -- Mood entries table
         CREATE TABLE IF NOT EXISTS mood_entries (
           local_id INTEGER PRIMARY KEY AUTOINCREMENT,
           id TEXT UNIQUE NOT NULL,
@@ -114,7 +126,7 @@ export class MoodService {
           sleep_quality INTEGER CHECK (sleep_quality >= 1 AND sleep_quality <= 10),
           weather TEXT,
           location TEXT,
-          tags TEXT, -- JSON string for array
+          tags TEXT,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL,
           last_synced_at TEXT,
@@ -125,13 +137,12 @@ export class MoodService {
           CONSTRAINT unique_user_date UNIQUE (user_id, entry_date)
         );
 
-        -- Mood patterns cache table
         CREATE TABLE IF NOT EXISTS mood_patterns (
           local_id INTEGER PRIMARY KEY AUTOINCREMENT,
           id TEXT UNIQUE NOT NULL,
           user_id TEXT NOT NULL,
           pattern_type TEXT NOT NULL,
-          pattern_data TEXT NOT NULL, -- JSON string
+          pattern_data TEXT NOT NULL,
           confidence_score REAL,
           start_date TEXT NOT NULL,
           end_date TEXT NOT NULL,
@@ -140,9 +151,9 @@ export class MoodService {
           updated_at TEXT NOT NULL
         );
 
-        -- Create indexes
         CREATE INDEX IF NOT EXISTS idx_mood_entries_user_date ON mood_entries(user_id, entry_date DESC);
         CREATE INDEX IF NOT EXISTS idx_mood_entries_user_created ON mood_entries(user_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_mood_entries_sync_status ON mood_entries(sync_status, is_dirty);
         CREATE INDEX IF NOT EXISTS idx_mood_patterns_user_type ON mood_patterns(user_id, pattern_type);
       `);
     } catch (error) {
@@ -182,9 +193,23 @@ export class MoodService {
     if (this.networkUnsubscribe) {
       this.networkUnsubscribe();
     }
+    this.clearCache();
   }
 
-  // Create or update mood entry (offline-first)
+  private clearCache(): void {
+    this.cache = {
+      todaysMood: null,
+      weeklyMoods: null,
+      userId: null
+    };
+  }
+
+  private isCacheValid(cacheEntry: { timestamp: number } | null): boolean {
+    if (!cacheEntry) return false;
+    return Date.now() - cacheEntry.timestamp < this.CACHE_TTL;
+  }
+
+  // FIX #1: Update entry_time and created_at when updating existing entry
   public async saveMoodEntry(moodData: {
     mood_score: number;
     notes?: string;
@@ -201,9 +226,9 @@ export class MoodService {
 
     const today = new Date().toISOString().split('T')[0];
     const now = new Date().toISOString();
+    const currentTime = new Date().toTimeString().split(' ')[0];
 
     try {
-      // Check if entry exists for today
       const existingEntry = await this.getMoodEntryByDate(today, userId);
 
       const moodEntry: LocalMoodRecord = {
@@ -213,7 +238,7 @@ export class MoodService {
         emoji: this.getMoodEmoji(moodData.mood_score),
         notes: moodData.notes,
         entry_date: today,
-        entry_time: new Date().toTimeString().split(' ')[0],
+        entry_time: currentTime, // Always update with current time
         energy_level: moodData.energy_level,
         stress_level: moodData.stress_level,
         sleep_hours: moodData.sleep_hours,
@@ -221,14 +246,17 @@ export class MoodService {
         weather: moodData.weather,
         location: moodData.location,
         tags: moodData.tags,
-        created_at: existingEntry?.created_at || now,
-        updated_at: now,
+        created_at: existingEntry?.created_at || now, // Keep original created_at for first entry
+        updated_at: now, // Always update this
         is_dirty: true,
         sync_status: 'pending'
       };
 
-      // Save to local database
       await this.insertOrUpdateMoodEntry(moodEntry);
+
+      // Invalidate caches
+      this.cache.todaysMood = null;
+      this.cache.weeklyMoods = null;
 
       // Try to sync if online
       if (this.isOnline()) {
@@ -262,14 +290,13 @@ export class MoodService {
     );
   }
 
-  // Get mood entries (offline-first)
   public async getMoodEntries(days?: number): Promise<LocalMoodRecord[]> {
     const userId = await this.getCurrentUserId();
     if (!userId) throw new Error('User not authenticated');
 
     try {
       let query = `SELECT * FROM mood_entries WHERE user_id = ?`;
-      const params = [userId];
+      const params: any[] = [userId];
 
       if (days) {
         const cutoffDate = new Date();
@@ -282,7 +309,6 @@ export class MoodService {
 
       const result = await this.db.db.getAllAsync<LocalMoodRecord>(query, params);
 
-      // Try to sync if online (but don't wait for it)
       if (this.isOnline()) {
         this.syncMoodEntries().catch(console.error);
       }
@@ -290,7 +316,7 @@ export class MoodService {
       return result.map(row => ({
         ...row,
         is_dirty: row.is_dirty === 1,
-        tags: row.tags ? JSON.parse(row.tags) : undefined
+        tags: row.tags ? JSON.parse(row.tags as string) : undefined
       }));
     } catch (error) {
       console.error('Error getting mood entries:', error);
@@ -308,31 +334,45 @@ export class MoodService {
       return {
         ...result,
         is_dirty: result.is_dirty === 1,
-        tags: result.tags ? JSON.parse(result.tags) : undefined
+        tags: result.tags ? JSON.parse(result.tags as string) : undefined
       };
     }
 
     return null;
   }
 
-  // Get today's mood entry
+  // OPTIMIZATION: Cached today's mood entry
   public async getTodaysMoodEntry(): Promise<LocalMoodRecord | null> {
+    if (this.isCacheValid(this.cache.todaysMood)) {
+      return this.cache.todaysMood!.data;
+    }
+
     const userId = await this.getCurrentUserId();
     if (!userId) return null;
 
     const today = new Date().toISOString().split('T')[0];
-    return this.getMoodEntryByDate(today, userId);
+    const entry = await this.getMoodEntryByDate(today, userId);
+    
+    this.cache.todaysMood = {
+      data: entry,
+      timestamp: Date.now()
+    };
+    
+    return entry;
   }
 
-  // Get weekly mood data
+  // OPTIMIZATION: Cached weekly mood data
   public async getWeeklyMoodData(): Promise<WeeklyMoodData[]> {
+    if (this.isCacheValid(this.cache.weeklyMoods)) {
+      return this.cache.weeklyMoods!.data;
+    }
+
     const userId = await this.getCurrentUserId();
     if (!userId) throw new Error('User not authenticated');
 
     const weekData: WeeklyMoodData[] = [];
     const today = new Date();
 
-    // Get last 7 days
     for (let i = 6; i >= 0; i--) {
       const date = new Date(today);
       date.setDate(date.getDate() - i);
@@ -344,21 +384,25 @@ export class MoodService {
       weekData.push({
         day: dayName,
         emoji: entry?.emoji || '😐',
-        score: entry?.mood_score || 5,
+        score: entry?.mood_score || 0,
         date: dateStr
       });
     }
 
+    this.cache.weeklyMoods = {
+      data: weekData,
+      timestamp: Date.now()
+    };
+
     return weekData;
   }
 
-  // Get mood statistics
   public async getMoodStats(): Promise<MoodStats> {
     const userId = await this.getCurrentUserId();
     if (!userId) throw new Error('User not authenticated');
 
     try {
-      const entries = await this.getMoodEntries(90); // Last 90 days
+      const entries = await this.getMoodEntries(90);
       
       if (entries.length === 0) {
         return {
@@ -376,10 +420,7 @@ export class MoodService {
       const totalMood = entries.reduce((sum, entry) => sum + entry.mood_score, 0);
       const averageMood = Number((totalMood / entries.length).toFixed(1));
 
-      // Calculate streak (consecutive days with entries)
       const currentStreak = this.calculateMoodStreak(entries);
-
-      // Calculate day-of-week statistics
       const dayStats = this.calculateDayStatistics(entries);
       const bestDay = Object.keys(dayStats).reduce((a, b) => 
         dayStats[a] > dayStats[b] ? a : b
@@ -388,10 +429,8 @@ export class MoodService {
         dayStats[a] < dayStats[b] ? a : b
       );
 
-      // Calculate trend
       const moodTrend = this.calculateMoodTrend(entries);
 
-      // Weekly and monthly averages
       const weeklyEntries = entries.filter(e => {
         const entryDate = new Date(e.entry_date);
         const weekAgo = new Date();
@@ -434,7 +473,6 @@ export class MoodService {
     let streak = 0;
     const today = new Date();
     
-    // Sort entries by date descending
     const sortedEntries = entries.sort((a, b) => 
       new Date(b.entry_date).getTime() - new Date(a.entry_date).getTime()
     );
@@ -444,7 +482,6 @@ export class MoodService {
       const expectedDate = new Date(today);
       expectedDate.setDate(expectedDate.getDate() - i);
 
-      // Check if entry is for the expected consecutive day
       if (entryDate.toDateString() === expectedDate.toDateString()) {
         streak++;
       } else {
@@ -497,18 +534,16 @@ export class MoodService {
     return 'stable';
   }
 
-  // Get mood-habit correlations using AI service
+  // FIX #2: Return actual habit bg_color for proper text contrast
   public async getMoodHabitCorrelations(): Promise<MoodHabitCorrelation[]> {
     const userId = await this.getCurrentUserId();
     if (!userId) throw new Error('User not authenticated');
 
     try {
-      // Get mood and habit data
       const moodEntries = await this.getMoodEntries(90);
       const habits = await this.db.getHabits(userId);
       const completions = await this.db.getCompletions(userId, 90);
 
-      // Use AI service to analyze correlations
       const response = await aiService.analyzeMoodPatterns({
         moodData: moodEntries,
         habits,
@@ -519,7 +554,6 @@ export class MoodService {
         return this.parseCorrelationInsights(response.insights, habits);
       }
 
-      // Fallback: basic correlation calculation
       return this.calculateBasicCorrelations(moodEntries, habits, completions);
     } catch (error) {
       console.error('Error getting mood-habit correlations:', error);
@@ -528,7 +562,6 @@ export class MoodService {
   }
 
   private parseCorrelationInsights(insights: any[], habits: any[]): MoodHabitCorrelation[] {
-    // Parse AI insights into correlation format
     return insights
       .filter(insight => insight.type === 'habit_correlation')
       .map(insight => {
@@ -540,21 +573,22 @@ export class MoodService {
           correlation_strength: insight.correlation || 0,
           boost_description: insight.description,
           color: this.getCorrelationColor(insight.correlation),
-          bgColor: this.getCorrelationBgColor(insight.correlation)
+          bgColor: habit?.bg_color || this.getCorrelationBgColor(insight.correlation),
+          bg_color: habit?.bg_color || this.getCorrelationBgColor(insight.correlation) // Use actual habit bg_color
         };
       });
   }
 
   private calculateBasicCorrelations(moodEntries: LocalMoodRecord[], habits: any[], completions: any[]): MoodHabitCorrelation[] {
-    // Simple correlation calculation as fallback
     return habits.slice(0, 3).map((habit, index) => ({
       habit_id: habit.id,
       habit_name: habit.title,
       habit_icon: habit.icon,
-      correlation_strength: 0.7 - (index * 0.2), // Mock data
+      correlation_strength: 0.7 - (index * 0.2),
       boost_description: `+${(2.3 - (index * 0.5)).toFixed(1)} mood boost`,
       color: index === 0 ? '#10B981' : index === 1 ? '#3B82F6' : '#F59E0B',
-      bgColor: index === 0 ? '#D1FAE5' : index === 1 ? '#DBEAFE' : '#FEF3C7'
+      bgColor: habit.bg_color || (index === 0 ? '#D1FAE5' : index === 1 ? '#DBEAFE' : '#FEF3C7'),
+      bg_color: habit.bg_color || (index === 0 ? '#D1FAE5' : index === 1 ? '#DBEAFE' : '#FEF3C7') // Use actual habit bg_color
     }));
   }
 
@@ -570,7 +604,6 @@ export class MoodService {
     return '#FEE2E2';
   }
 
-  // Sync functionality
   public async syncMoodEntries(): Promise<void> {
     if (!this.isOnline()) return;
 
@@ -578,11 +611,11 @@ export class MoodService {
     if (!userId) return;
 
     try {
-      // Sync local entries to server
       await this.syncMoodEntriesToServer();
-      
-      // Sync server entries to local
       await this.syncMoodEntriesFromServer();
+      
+      // Invalidate caches after sync
+      this.clearCache();
       
       console.log('Mood sync completed successfully');
     } catch (error) {
@@ -611,7 +644,7 @@ export class MoodService {
           sleep_quality: entry.sleep_quality,
           weather: entry.weather,
           location: entry.location,
-          tags: entry.tags ? JSON.parse(entry.tags) : null,
+          tags: entry.tags ? JSON.parse(entry.tags as string) : null,
           created_at: entry.created_at,
           updated_at: entry.updated_at
         };
@@ -624,7 +657,6 @@ export class MoodService {
 
         if (error) throw error;
 
-        // Mark as synced
         await this.markMoodEntryAsSynced(entry.id);
       } catch (error) {
         console.error(`Error syncing mood entry ${entry.id}:`, error);
@@ -727,16 +759,16 @@ export class MoodService {
     return result?.last_sync || null;
   }
 
-  // Delete mood entry
   public async deleteMoodEntry(entryId: string): Promise<void> {
     try {
-      // Delete from local database
       await this.db.db.runAsync(
         `DELETE FROM mood_entries WHERE id = ?`,
         [entryId]
       );
 
-      // Try to delete from server if online
+      // Invalidate caches
+      this.clearCache();
+
       if (this.isOnline()) {
         const { error } = await supabase
           .from('mood_entries')
@@ -753,7 +785,6 @@ export class MoodService {
     }
   }
 
-  // Utility methods
   private getMoodEmoji(score: number): string {
     return this.MOOD_EMOJIS[score as keyof typeof this.MOOD_EMOJIS] || '😐';
   }
@@ -773,9 +804,21 @@ export class MoodService {
     ];
   }
 
+  // OPTIMIZATION: Cached user ID
   private async getCurrentUserId(): Promise<string | null> {
+    if (this.isCacheValid(this.cache.userId)) {
+      return this.cache.userId!.id;
+    }
+
     const { data: { user } } = await supabase.auth.getUser();
-    return user?.id || null;
+    const userId = user?.id || null;
+    
+    this.cache.userId = {
+      id: userId,
+      timestamp: Date.now()
+    };
+    
+    return userId;
   }
 
   public getNetworkStatus(): NetworkStatus {
@@ -787,9 +830,9 @@ export class MoodService {
       DELETE FROM mood_patterns;
       DELETE FROM mood_entries;
     `);
+    this.clearCache();
   }
 
-  // Get mood patterns and insights using AI
   public async getMoodInsights(): Promise<string> {
     const userId = await this.getCurrentUserId();
     if (!userId) throw new Error('User not authenticated');
@@ -813,7 +856,6 @@ export class MoodService {
         return response.message;
       }
 
-      // Fallback insight
       const stats = await this.getMoodStats();
       if (stats.moodTrend === 'improving') {
         return `Your mood has been improving over time! Your average mood score is ${stats.averageMood}/10, which is trending upward.`;

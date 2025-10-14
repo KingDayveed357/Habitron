@@ -40,7 +40,7 @@ const CustomHeader = ({ route }: { route: { name: string } }) => {
         alignItems: 'center',
         justifyContent: 'space-between',
         borderBottomWidth: 0.5,
-        borderBottomColor: isDark ? '#111827;' : '#e5e7eb',
+        borderBottomColor: isDark ? '#111827' : '#e5e7eb',
       }}
     >
       {isHome ? (

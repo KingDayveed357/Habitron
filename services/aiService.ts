@@ -2,6 +2,7 @@
 import { supabase } from './supabase';
 import { HabitWithCompletion, HabitStats } from '@/types/habit';
 
+
 export interface AIInsightRequest {
   type: 'home_insights' | 'mood_analysis' | 'habit_suggestions' | 'habit_detail' | 'chat';
   data?: any;
@@ -230,7 +231,7 @@ Task: Analyze mood patterns in relation to habit completion. Provide insights ab
         };
 
         // Update conversation cache
-        const cacheKey = conversationId || user?.id || 'default';
+        const cacheKey = conversationId  || 'default';
         const history = this.conversationCache.get(cacheKey) || [];
         history.push(userMessage, aiMessage);
         

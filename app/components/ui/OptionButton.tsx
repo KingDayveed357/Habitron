@@ -11,7 +11,7 @@ const OptionButton: React.FC<{
 }> = ({ option, isSelected, onPress, isMultiple = false }) => (
 <TouchableOpacity
   onPress={onPress}
-  className={`flex-row items-center p-4 mb-3 rounded-xl border-2 transition-all ${
+  className={`flex-row items-center p-4 mb-3 rounded-xl border-2  ${
     isSelected 
       ? 'border-indigo-500 dark:bg-gray-800  bg-indigo-50' 
       : 'dark:border-gray-700 border-gray-50 bg-white dark:bg-gray-800 '

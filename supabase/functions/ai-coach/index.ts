@@ -1,4 +1,4 @@
-// supabase/functions/ai-coach/index.ts
+// OLD SUPABASE EDGE FUNCTION - supabase/functions/ai-coach/index.ts
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import "https://deno.land/x/xhr@0.1.0/mod.ts"
 

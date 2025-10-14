@@ -64,6 +64,14 @@ export interface HabitDataProps {
   monthlyTrend: number[];
   correlationScore: number;
   dailyData: { date: string; completed: boolean }[];
+
+  frequency?: {
+    type: 'daily' | 'weekly' | 'monthly' | 'custom';
+    count: number;
+    expected: number;  // Expected completions for period
+    actual: number;    // Actual completions
+    days?: number[];   // For specific days
+  };
 }
 
 export interface AIInsight {

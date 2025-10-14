@@ -1,6 +1,6 @@
+// app/screens/create_habit.tsx
 import { useState, useEffect } from 'react';
 import { Stack } from "expo-router";
-
 import {
   View,
   Text,
@@ -111,11 +111,7 @@ const HABIT_CATEGORIES = [
   'General'
 ];
 
-interface FrequencySettings {
-  dailyDays: string[];
-  weeklyCount: number;
-  monthlyDays: number[];
-}
+const weekLabels = ['SU', 'M', 'TU', 'W', 'TH', 'F', 'SA'];
 
 const CreateHabitScreen = () => {
   const router = useRouter();
@@ -130,33 +126,24 @@ const CreateHabitScreen = () => {
     category: 'General',
     target_count: 1,
     target_unit: 'times',
-    frequency: 'daily',
+    frequency_type: 'daily',
+    frequency_count: null,
+    frequency_days: null,
     bg_color: 'bg-blue-500'
   });
 
-  // Additional states for enhanced features
+  // Additional states
   const [errors, setErrors] = useState<Partial<CreateHabitRequest>>({});
   const [isIconModalVisible, setIsIconModalVisible] = useState(false);
   const [iconModalTab, setIconModalTab] = useState<'Emoji' | 'Icon'>('Emoji');
   const [customCategory, setCustomCategory] = useState('');
   const [isAddingCategory, setIsAddingCategory] = useState(false);
   const [categories, setCategories] = useState(HABIT_CATEGORIES);
-
-   const { suggestions, generateSuggestions, loadingSuggestions } = useAICoach();
-
-   useEffect(() => {
-    if (suggestions.length === 0) {
-      generateSuggestions();
-    }
-  }, []);
-
   
-  // Frequency settings
-  const [frequencySettings, setFrequencySettings] = useState<FrequencySettings>({
-    dailyDays: [],
-    weeklyCount: 0,
-    monthlyDays: []
-  });
+  // Frequency settings state
+  const [selectedDays, setSelectedDays] = useState<string[]>([]);
+  const [weeklyCount, setWeeklyCount] = useState(1);
+  const [monthlyDays, setMonthlyDays] = useState<number[]>([]);
   const [allDaysSelected, setAllDaysSelected] = useState(false);
   
   // Reminder settings
@@ -171,7 +158,13 @@ const CreateHabitScreen = () => {
     weeklyOptimization: true
   });
 
-  const weekLabels = ['SU', 'M', 'TU', 'W', 'TH', 'F', 'SA'];
+  const { suggestions, generateSuggestions, loadingSuggestions } = useAICoach();
+
+  useEffect(() => {
+    if (suggestions.length === 0) {
+      generateSuggestions();
+    }
+  }, []);
 
   const validateForm = (): boolean => {
     const newErrors: Partial<CreateHabitRequest> = {};
@@ -198,6 +191,22 @@ const CreateHabitScreen = () => {
       newErrors.description = 'Description must be less than 500 characters';
     }
 
+    // Validate frequency settings
+    if (formData.frequency_type === 'daily' && selectedDays.length === 0) {
+      Alert.alert('Validation Error', 'Please select at least one day for daily frequency');
+      return false;
+    }
+
+    if (formData.frequency_type === 'weekly' && weeklyCount < 1) {
+      Alert.alert('Validation Error', 'Please select how many times per week');
+      return false;
+    }
+
+    if (formData.frequency_type === 'monthly' && monthlyDays.length === 0) {
+      Alert.alert('Validation Error', 'Please select at least one day for monthly frequency');
+      return false;
+    }
+
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -214,8 +223,27 @@ const CreateHabitScreen = () => {
 
     setLoading(true);
     try {
+      // Prepare frequency data based on frequency type
+      let frequencyData: Partial<CreateHabitRequest> = {
+        frequency_type: formData.frequency_type,
+        frequency_count: null,
+        frequency_days: null
+      };
+
+      if (formData.frequency_type === 'daily') {
+        // For daily, store selected days as JSON array
+        frequencyData.frequency_days = selectedDays.length > 0 ? selectedDays : null;
+      } else if (formData.frequency_type === 'weekly') {
+        // For weekly, store count
+        frequencyData.frequency_count = weeklyCount;
+      } else if (formData.frequency_type === 'monthly') {
+        // For monthly, store days as JSON array of numbers
+        frequencyData.frequency_days = monthlyDays.length > 0 ? monthlyDays.sort((a, b) => a - b) : null;
+      }
+
       const habitData: CreateHabitRequest = {
         ...formData,
+        ...frequencyData,
         title: formData.title.trim(),
         description: formData.description?.trim() || undefined,
         target_unit: formData.target_unit.trim()
@@ -286,29 +314,29 @@ const CreateHabitScreen = () => {
   };
 
   const toggleDailyDay = (day: string) => {
-    const newDays = frequencySettings.dailyDays.includes(day)
-      ? frequencySettings.dailyDays.filter(d => d !== day)
-      : [...frequencySettings.dailyDays, day];
+    const newDays = selectedDays.includes(day)
+      ? selectedDays.filter(d => d !== day)
+      : [...selectedDays, day];
     
-    setFrequencySettings({ ...frequencySettings, dailyDays: newDays });
+    setSelectedDays(newDays);
     setAllDaysSelected(newDays.length === 7);
   };
 
   const toggleAllDays = () => {
     if (allDaysSelected) {
-      setFrequencySettings({ ...frequencySettings, dailyDays: [] });
+      setSelectedDays([]);
     } else {
-      setFrequencySettings({ ...frequencySettings, dailyDays: weekLabels });
+      setSelectedDays([...weekLabels]);
     }
     setAllDaysSelected(!allDaysSelected);
   };
 
   const toggleMonthlyDay = (day: number) => {
-    const newDays = frequencySettings.monthlyDays.includes(day)
-      ? frequencySettings.monthlyDays.filter(d => d !== day)
-      : [...frequencySettings.monthlyDays, day];
+    const newDays = monthlyDays.includes(day)
+      ? monthlyDays.filter(d => d !== day)
+      : [...monthlyDays, day];
     
-    setFrequencySettings({ ...frequencySettings, monthlyDays: newDays });
+    setMonthlyDays(newDays);
   };
 
   const addCustomCategory = () => {
@@ -319,6 +347,20 @@ const CreateHabitScreen = () => {
       setCustomCategory('');
       setIsAddingCategory(false);
     }
+  };
+
+  const getFrequencyDescription = () => {
+    if (formData.frequency_type === 'daily') {
+      if (selectedDays.length === 0) return 'Select days';
+      if (selectedDays.length === 7) return 'Every day';
+      return `${selectedDays.length} days/week`;
+    } else if (formData.frequency_type === 'weekly') {
+      return `${weeklyCount}x per week`;
+    } else if (formData.frequency_type === 'monthly') {
+      if (monthlyDays.length === 0) return 'Select days';
+      return `${monthlyDays.length} days/month`;
+    }
+    return 'Not set';
   };
 
   if (!user) {
@@ -346,7 +388,7 @@ const CreateHabitScreen = () => {
     <SafeAreaView className="flex-1 bg-white dark:bg-black">
       <Stack.Screen options={{ headerShown: false }} />
 
-      {/* Header - Compact without arrow */}
+      {/* Header */}
       <View className="flex-row items-center justify-between px-4 py-2 border-b border-gray-200 dark:border-gray-700">
         <TouchableOpacity 
           onPress={handleCancel}
@@ -389,7 +431,7 @@ const CreateHabitScreen = () => {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        {/* AI Suggestions - Only show if we have suggestions */}
+        {/* AI Suggestions */}
         {suggestions.length > 0 && (
           <View className="bg-blue-50 dark:bg-gray-800 border border-blue-200 dark:border-gray-700 rounded-2xl p-4 mx-4 mt-4 mb-6">
             <View className="flex-row items-center justify-between mb-2">
@@ -433,7 +475,6 @@ const CreateHabitScreen = () => {
           </View>
         )}
 
-        {/* Loading state for AI Suggestions when no suggestions yet */}
         {loadingSuggestions && suggestions.length === 0 && (
           <View className="bg-blue-50 dark:bg-gray-800 border border-blue-200 dark:border-gray-700 rounded-2xl p-4 mx-4 mt-4 mb-6">
             <View className="flex-row items-center justify-center">
@@ -601,6 +642,24 @@ const CreateHabitScreen = () => {
                   }}
                   placeholder="1"
                   placeholderTextColor="#9CA3AF"
+                  keyboardType="numeric"
+                  className={`border rounded-xl p-4 text-gray-800 dark:text-white dark:bg-gray-800 ${
+                    errors.target_count 
+                      ? 'border-red-500 bg-red-50 dark:bg-red-900/20' 
+                      : 'border-gray-300 dark:border-gray-600 bg-gray-100'
+                  }`}
+                  editable={!loading}
+                />
+              </View>
+              <View className="flex-1">
+                <Text className="text-gray-700 dark:text-gray-300 font-semibold mb-2">
+                  Unit {errors.target_unit && <Text className="text-red-500">*</Text>}
+                </Text>
+                <TextInput
+                  value={formData.target_unit}
+                  onChangeText={(text) => setFormData({ ...formData, target_unit: text })}
+                  placeholder="times, glasses, etc."
+                  placeholderTextColor="#9CA3AF"
                   className={`border rounded-xl p-4 text-gray-800 dark:text-white dark:bg-gray-800 ${
                     errors.target_unit 
                       ? 'border-red-500 bg-red-50 dark:bg-red-900/20' 
@@ -620,22 +679,21 @@ const CreateHabitScreen = () => {
                 <TouchableOpacity
                   key={index}
                   className={`px-6 py-3 rounded-xl border ${
-                    formData.frequency === frequency.value
+                    formData.frequency_type === frequency.value
                       ? 'bg-indigo-500 border-indigo-500'
                       : 'bg-gray-100 dark:bg-gray-800 border-gray-200 dark:border-gray-600'
                   }`}
                   onPress={() => {
-                    setFormData({ ...formData, frequency: frequency.value });
-                    setFrequencySettings({
-                      dailyDays: [],
-                      weeklyCount: 0,
-                      monthlyDays: []
-                    });
+                    setFormData({ ...formData, frequency_type: frequency.value });
+                    // Reset frequency settings when changing type
+                    setSelectedDays([]);
+                    setWeeklyCount(1);
+                    setMonthlyDays([]);
                     setAllDaysSelected(false);
                   }}
                 >
                   <Text className={`text-sm font-medium ${
-                    formData.frequency === frequency.value 
+                    formData.frequency_type === frequency.value 
                       ? 'text-white' 
                       : 'text-gray-800 dark:text-white'
                   }`}>
@@ -647,7 +705,7 @@ const CreateHabitScreen = () => {
           </View>
 
           {/* Daily Frequency Settings */}
-          {formData.frequency === 'daily' && (
+          {formData.frequency_type === 'daily' && (
             <View className="mb-6">
               <View className="flex-row justify-between items-center mb-3">
                 <Text className="text-lg font-semibold text-gray-800 dark:text-white">On these days</Text>
@@ -665,14 +723,14 @@ const CreateHabitScreen = () => {
                   <TouchableOpacity
                     key={day}
                     className={`w-12 h-12 items-center justify-center rounded-full border ${
-                      frequencySettings.dailyDays.includes(day)
+                      selectedDays.includes(day)
                         ? 'bg-indigo-500 border-indigo-500'
                         : 'bg-gray-100 dark:bg-gray-800 border-gray-400'
                     }`}
                     onPress={() => toggleDailyDay(day)}
                   >
                     <Text className={`text-sm ${
-                      frequencySettings.dailyDays.includes(day)
+                      selectedDays.includes(day)
                         ? 'text-white'
                         : 'text-gray-800 dark:text-white'
                     }`}>
@@ -685,7 +743,7 @@ const CreateHabitScreen = () => {
           )}
 
           {/* Weekly Frequency Settings */}
-          {formData.frequency === 'weekly' && (
+          {formData.frequency_type === 'weekly' && (
             <View className="mb-6">
               <Text className="text-lg font-semibold text-gray-800 dark:text-white mb-3">How many times per week?</Text>
               <View className="flex-row flex-wrap gap-3">
@@ -693,14 +751,14 @@ const CreateHabitScreen = () => {
                   <TouchableOpacity
                     key={count}
                     className={`w-12 h-12 items-center justify-center rounded-full border ${
-                      frequencySettings.weeklyCount === count
+                      weeklyCount === count
                         ? 'bg-indigo-500 border-indigo-500'
                         : 'bg-gray-100 dark:bg-gray-800 border-gray-400'
                     }`}
-                    onPress={() => setFrequencySettings({ ...frequencySettings, weeklyCount: count })}
+                    onPress={() => setWeeklyCount(count)}
                   >
                     <Text className={`text-sm ${
-                      frequencySettings.weeklyCount === count
+                      weeklyCount === count
                         ? 'text-white'
                         : 'text-gray-800 dark:text-white'
                     }`}>
@@ -713,7 +771,7 @@ const CreateHabitScreen = () => {
           )}
 
           {/* Monthly Frequency Settings */}
-          {formData.frequency === 'monthly' && (
+          {formData.frequency_type === 'monthly' && (
             <View className="mb-6">
               <Text className="text-lg font-semibold text-gray-800 dark:text-white mb-3">Select Days in the Month</Text>
               <View className="flex-row flex-wrap gap-3">
@@ -721,14 +779,14 @@ const CreateHabitScreen = () => {
                   <TouchableOpacity
                     key={day}
                     className={`w-12 h-12 items-center justify-center rounded-full border ${
-                      frequencySettings.monthlyDays.includes(day)
+                      monthlyDays.includes(day)
                         ? 'bg-indigo-500 border-indigo-500'
                         : 'bg-gray-100 dark:bg-gray-800 border-gray-400'
                     }`}
                     onPress={() => toggleMonthlyDay(day)}
                   >
                     <Text className={`text-sm ${
-                      frequencySettings.monthlyDays.includes(day)
+                      monthlyDays.includes(day)
                         ? 'text-white'
                         : 'text-gray-800 dark:text-white'
                     }`}>
@@ -737,9 +795,9 @@ const CreateHabitScreen = () => {
                   </TouchableOpacity>
                 ))}
               </View>
-              {frequencySettings.monthlyDays.length > 0 && (
+              {monthlyDays.length > 0 && (
                 <Text className="mt-3 text-sm text-gray-600 dark:text-gray-400">
-                  Every Month on {frequencySettings.monthlyDays.sort((a, b) => a - b).join(', ')}
+                  Every Month on {monthlyDays.sort((a, b) => a - b).join(', ')}
                 </Text>
               )}
             </View>
@@ -785,9 +843,7 @@ const CreateHabitScreen = () => {
                     {formData.title || 'Your habit name'}
                   </Text>
                   <Text className="text-sm text-gray-500 dark:text-gray-400">
-                    {formData.target_count} {formData.target_unit} • {
-                      HABIT_FREQUENCIES.find(f => f.value === formData.frequency)?.label || 'Daily'
-                    }
+                    {formData.target_count} {formData.target_unit} • {getFrequencyDescription()}
                   </Text>
                   {formData.description && (
                     <Text className="text-xs text-gray-500 dark:text-gray-400 mt-1">
@@ -887,7 +943,6 @@ const CreateHabitScreen = () => {
         onRequestClose={() => setIsIconModalVisible(false)}
       >
         <View className="flex-1 bg-white dark:bg-gray-900">
-          {/* Modal Header */}
           <View className="px-5 py-4 border-b border-gray-200 dark:border-gray-700">
             <View className="flex-row items-center justify-between">
               <Text className="text-xl font-semibold text-gray-900 dark:text-white">Choose Icon</Text>
@@ -896,7 +951,6 @@ const CreateHabitScreen = () => {
               </TouchableOpacity>
             </View>
             
-            {/* Tab Selector */}
             <View className="flex-row mt-4 bg-gray-100 dark:bg-gray-800 rounded-lg p-1">
               <TouchableOpacity
                 className={`flex-1 py-2 rounded-md ${
@@ -933,7 +987,6 @@ const CreateHabitScreen = () => {
             </View>
           </View>
 
-          {/* Icons/Emojis Grid */}
           <ScrollView className="flex-1 px-5" contentContainerStyle={{ paddingTop: 20, paddingBottom: 100 }}>
             <View className="flex-row flex-wrap justify-between">
               {(iconModalTab === 'Emoji' ? ALL_EMOJIS : FUNCTIONAL_ICONS).map((icon, index) => (
@@ -952,7 +1005,6 @@ const CreateHabitScreen = () => {
             </View>
           </ScrollView>
 
-          {/* Modal Footer */}
           <View className="px-5 py-4 border-t border-gray-200 dark:border-gray-700">
             <TouchableOpacity 
               className="bg-indigo-500 rounded-xl py-3"
@@ -967,4 +1019,4 @@ const CreateHabitScreen = () => {
   );
 };
 
-export default CreateHabitScreen; 
+export default CreateHabitScreen;

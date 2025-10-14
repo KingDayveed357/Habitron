@@ -170,7 +170,7 @@ const HabitCard: React.FC<HabitCardProps> = ({ habit, onToggle, isLast = false, 
         
             <View className={`${getProgressBarBackground()} rounded-full h-2`}>
               <View 
-                className={`rounded-full h-2 ${getProgressColor()} transition-all duration-300`}
+                className={`rounded-full h-2 ${getProgressColor()} `}
                 style={{ width: `${Math.min(progressValue * 100, 100)}%` }}
               />
             </View>

@@ -1,11 +1,10 @@
 // app/screens/mood_history.tsx
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, Alert, Dimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
-import { LinearGradient } from 'expo-linear-gradient';
 import { Stack } from 'expo-router';
 import { DatabaseService } from '@/services/databaseService';
 import { MoodService, LocalMoodRecord, MoodStats } from '@/services/moodService';
@@ -25,40 +24,55 @@ interface MonthData {
   totalEntries: number;
 }
 
-const MoodHistoryScreen: React.FC = () => {
+interface LoadingState {
+  overview: boolean;
+  calendar: boolean;
+  patterns: boolean;
+}
+
+const MoodHistoryScreen: React.FC = React.memo(() => {
   const [activeTab, setActiveTab] = useState<'overview' | 'calendar' | 'patterns'>('overview');
   const [isLoading, setIsLoading] = useState(true);
+  const [loadingState, setLoadingState] = useState<LoadingState>({
+    overview: false,
+    calendar: false,
+    patterns: false
+  });
   const [moodStats, setMoodStats] = useState<MoodStats | null>(null);
   const [monthsData, setMonthsData] = useState<MonthData[]>([]);
   const [selectedMonth, setSelectedMonth] = useState<MonthData | null>(null);
   const [calendarData, setCalendarData] = useState<MoodCalendarEntry[]>([]);
   const [currentMonth, setCurrentMonth] = useState(new Date());
+  const [cachedEntries, setCachedEntries] = useState<LocalMoodRecord[]>([]);
 
   const router = useRouter();
   const db = useSQLiteContext();
 
-  // Initialize services
-  const databaseService = new DatabaseService(db);
-  const moodService = new MoodService(databaseService);
+  // Memoize services and constants
+  const databaseService = useMemo(() => new DatabaseService(db), [db]);
+  const moodService = useMemo(() => new MoodService(databaseService), [databaseService]);
 
-  const daysOfWeek = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  const monthNames = [
+  const daysOfWeek = useMemo(() => ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'], []);
+  const monthNames = useMemo(() => [
     'January', 'February', 'March', 'April', 'May', 'June',
     'July', 'August', 'September', 'October', 'November', 'December'
-  ];
+  ], []);
 
-  const loadMoodHistory = async () => {
+  // Optimized data loading with caching
+  const loadMoodHistory = useCallback(async () => {
     try {
       setIsLoading(true);
 
-      // Load mood statistics
-      const stats = await moodService.getMoodStats();
-      setMoodStats(stats);
+      // Load data in parallel
+      const [stats, entries] = await Promise.all([
+        moodService.getMoodStats(),
+        moodService.getMoodEntries(180) // Cache last 6 months
+      ]);
 
-      // Load mood entries for the last 6 months
-      const entries = await moodService.getMoodEntries(180);
-      
-      // Group entries by month
+      setMoodStats(stats);
+      setCachedEntries(entries);
+
+      // Group entries by month efficiently
       const monthlyData = groupEntriesByMonth(entries);
       setMonthsData(monthlyData);
 
@@ -67,17 +81,16 @@ const MoodHistoryScreen: React.FC = () => {
       setCurrentMonth(currentDate);
       
       if (monthlyData.length > 0) {
-        setSelectedMonth(monthlyData[0]);
-        generateCalendarData(monthlyData[0]);
+        const currentMonthData = monthlyData.find(m => 
+          m.year === currentDate.getFullYear() && 
+          monthNames.indexOf(m.month) === currentDate.getMonth()
+        ) || monthlyData[0];
+        
+        setSelectedMonth(currentMonthData);
+        generateCalendarData(currentMonthData);
       } else {
-        // If no data for current month, create empty month data
-        const emptyMonth = {
-          month: monthNames[currentDate.getMonth()],
-          year: currentDate.getFullYear(),
-          entries: [],
-          avgMood: 0,
-          totalEntries: 0
-        };
+        // Create empty month data for current month
+        const emptyMonth = createEmptyMonthData(currentDate);
         setSelectedMonth(emptyMonth);
         generateCalendarData(emptyMonth);
       }
@@ -88,9 +101,10 @@ const MoodHistoryScreen: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [moodService, monthNames]);
 
-  const groupEntriesByMonth = (entries: LocalMoodRecord[]): MonthData[] => {
+  // Memoized helper functions
+  const groupEntriesByMonth = useCallback((entries: LocalMoodRecord[]): MonthData[] => {
     const monthGroups: { [key: string]: LocalMoodRecord[] } = {};
 
     entries.forEach(entry => {
@@ -121,18 +135,18 @@ const MoodHistoryScreen: React.FC = () => {
           totalEntries: monthEntries.length
         };
       });
-  };
+  }, [monthNames]);
 
-  const generateCalendarData = (monthData?: MonthData) => {
-    // Use the provided monthData or create one based on currentMonth
-    const targetMonth = monthData || {
-      month: monthNames[currentMonth.getMonth()],
-      year: currentMonth.getFullYear(),
-      entries: [],
-      avgMood: 0,
-      totalEntries: 0
-    };
+  const createEmptyMonthData = useCallback((date: Date): MonthData => ({
+    month: monthNames[date.getMonth()],
+    year: date.getFullYear(),
+    entries: [],
+    avgMood: 0,
+    totalEntries: 0
+  }), [monthNames]);
 
+  const generateCalendarData = useCallback((monthData?: MonthData) => {
+    const targetMonth = monthData || createEmptyMonthData(currentMonth);
     const year = targetMonth.year;
     const monthIndex = monthNames.indexOf(targetMonth.month);
     
@@ -158,16 +172,16 @@ const MoodHistoryScreen: React.FC = () => {
     }
     
     setCalendarData(calendarDays);
-  };
+  }, [currentMonth, monthNames, createEmptyMonthData]);
 
-  // Update calendar when month changes
+  // Update calendar when month changes (memoized)
   useEffect(() => {
     if (selectedMonth) {
       generateCalendarData(selectedMonth);
     }
-  }, [currentMonth]);
+  }, [selectedMonth, generateCalendarData]);
 
-  const navigateMonth = (direction: 'prev' | 'next') => {
+  const navigateMonth = useCallback((direction: 'prev' | 'next') => {
     const newMonth = new Date(currentMonth);
     if (direction === 'prev') {
       newMonth.setMonth(newMonth.getMonth() - 1);
@@ -176,7 +190,7 @@ const MoodHistoryScreen: React.FC = () => {
     }
     setCurrentMonth(newMonth);
     
-    // Find existing month data or create empty month data
+    // Find existing month data from cache or create empty month data
     const foundMonth = monthsData.find(m => 
       m.year === newMonth.getFullYear() && 
       monthNames.indexOf(m.month) === newMonth.getMonth()
@@ -184,46 +198,54 @@ const MoodHistoryScreen: React.FC = () => {
     
     if (foundMonth) {
       setSelectedMonth(foundMonth);
-      generateCalendarData(foundMonth);
     } else {
-      // Create empty month data for months without entries
-      const emptyMonth = {
+      // Create month data from cached entries
+      const monthEntries = cachedEntries.filter(entry => {
+        const entryDate = new Date(entry.entry_date);
+        return entryDate.getFullYear() === newMonth.getFullYear() &&
+               entryDate.getMonth() === newMonth.getMonth();
+      });
+
+      const avgMood = monthEntries.length > 0 
+        ? monthEntries.reduce((sum, entry) => sum + entry.mood_score, 0) / monthEntries.length
+        : 0;
+
+      const monthData: MonthData = {
         month: monthNames[newMonth.getMonth()],
         year: newMonth.getFullYear(),
-        entries: [],
-        avgMood: 0,
-        totalEntries: 0
+        entries: monthEntries,
+        avgMood: Number(avgMood.toFixed(1)),
+        totalEntries: monthEntries.length
       };
-      setSelectedMonth(emptyMonth);
-      generateCalendarData(emptyMonth);
+
+      setSelectedMonth(monthData);
     }
-  };
+  }, [currentMonth, monthsData, monthNames, cachedEntries]);
 
   useFocusEffect(
     useCallback(() => {
       loadMoodHistory();
       return () => moodService.destroy();
-    }, [])
+    }, [loadMoodHistory, moodService])
   );
 
-  const handleMonthSelect = (monthData: MonthData) => {
+  const handleMonthSelect = useCallback((monthData: MonthData) => {
     setSelectedMonth(monthData);
-    // Set the current month for calendar navigation
     const monthIndex = monthNames.indexOf(monthData.month);
     setCurrentMonth(new Date(monthData.year, monthIndex, 1));
-    generateCalendarData(monthData);
     setActiveTab('calendar');
-  };
+  }, [monthNames]);
 
-  const getMoodColor = (moodScore: number): string => {
+  const getMoodColor = useCallback((moodScore: number): string => {
     if (moodScore >= 8) return 'bg-green-100 border-green-300';
     if (moodScore >= 6) return 'bg-blue-100 border-blue-300';
     if (moodScore >= 4) return 'bg-yellow-100 border-yellow-300';
     if (moodScore >= 2) return 'bg-orange-100 border-orange-300';
     return 'bg-red-100 border-red-300';
-  };
+  }, []);
 
-  const renderCalendarGrid = () => {
+  // Memoized calendar grid renderer
+  const renderCalendarGrid = useMemo(() => {
     if (!selectedMonth) return null;
 
     return (
@@ -266,15 +288,27 @@ const MoodHistoryScreen: React.FC = () => {
         })}
       </View>
     );
-  };
+  }, [selectedMonth, calendarData, width, monthNames, getMoodColor]);
 
-  const formatMonthYear = (date: Date) => {
+  const formatMonthYear = useCallback((date: Date) => {
     return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-  };
+  }, []);
 
+  // Tab content renderers with loading states
   const renderOverview = () => (
     <View className="px-4">
-      {moodStats && (
+      {loadingState.overview ? (
+        <View className="space-y-4">
+          <View className="card p-4">
+            <View className="h-4 bg-gray-200 rounded w-1/3 mb-4 animate-pulse" />
+            <View className="grid grid-cols-2 gap-4">
+              {[...Array(4)].map((_, i) => (
+                <View key={i} className="h-20 bg-gray-100 rounded-2xl animate-pulse" />
+              ))}
+            </View>
+          </View>
+        </View>
+      ) : moodStats ? (
         <View className="card p-4 mb-4">
           <Text className="text-lg text-subheading mb-4">Overall Statistics</Text>
           
@@ -310,7 +344,7 @@ const MoodHistoryScreen: React.FC = () => {
             </View>
           </View>
         </View>
-      )}
+      ) : null}
      
       <View className="card p-4">
         <Text className="text-lg text-subheading mb-4">Monthly History</Text>
@@ -379,7 +413,7 @@ const MoodHistoryScreen: React.FC = () => {
         </View>
         
         {/* Calendar grid */}
-        {renderCalendarGrid()}
+        {renderCalendarGrid}
 
         {/* Month Statistics */}
         {selectedMonth && (
@@ -534,6 +568,16 @@ const MoodHistoryScreen: React.FC = () => {
     </View>
   );
 
+  // Handle tab changes with loading states
+  const handleTabChange = useCallback((tab: 'overview' | 'calendar' | 'patterns') => {
+    setActiveTab(tab);
+    
+    // Set loading state for the new tab if needed
+    if (tab === 'overview' && !moodStats) {
+      setLoadingState(prev => ({ ...prev, overview: true }));
+    }
+  }, [moodStats]);
+
   if (isLoading) {
     return (
       <SafeAreaView className="flex-1 bg-gray-50 dark:bg-black">
@@ -581,7 +625,7 @@ const MoodHistoryScreen: React.FC = () => {
         ].map((tab) => (
           <TouchableOpacity
             key={tab.key}
-            onPress={() => setActiveTab(tab.key as any)}
+            onPress={() => handleTabChange(tab.key as any)}
             className={`flex-1 flex-row items-center justify-center py-3 mx-1 rounded-lg ${
               activeTab === tab.key ? 'bg-indigo-100 dark:bg-indigo-900' : 'bg-gray-100 dark:bg-gray-800'
             }`}
@@ -605,6 +649,8 @@ const MoodHistoryScreen: React.FC = () => {
       </ScrollView>
     </SafeAreaView>
   );
-};
+});
+
+MoodHistoryScreen.displayName = 'MoodHistoryScreen';
 
 export default MoodHistoryScreen;

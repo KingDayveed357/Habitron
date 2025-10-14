@@ -1,6 +1,6 @@
 // types/habit.ts
 export interface Habit {
-  id: string ;
+  id: string;
   user_id: string;
   title: string;
   icon: string;
@@ -8,17 +8,19 @@ export interface Habit {
   category: string;
   target_count: number;
   target_unit: string;
-  frequency: 'daily' | 'weekly' | 'monthly';
+  frequency_type: 'daily' | 'weekly' | 'monthly';
+  frequency_count?: number | null; // For weekly (times per week)
+  frequency_days?: string[] | number[] | null; // For daily (day labels) or monthly (day numbers)
   bg_color: string;
-  is_active: boolean;
+  is_active: boolean | number;
   created_at: string;
   updated_at: string;
- 
+  
   // Offline-first fields
   last_synced_at?: string;
-  is_dirty?: boolean | number; // Indicates local changes not synced
-  conflict?: boolean; // Indicates sync conflict needs resolution
-  conflict_data?: {
+  is_dirty?: boolean | number;
+  conflict?: boolean;
+  conflict_data?: string | {
     local_version: Partial<Habit>;
     remote_version: Partial<Habit>;
     conflicted_fields: string[];
@@ -34,9 +36,10 @@ export interface HabitCompletion {
   notes?: string;
   created_at: string;
   updated_at: string;
+  
   // Offline-first fields
   last_synced_at?: string;
-  is_dirty?: boolean;
+  is_dirty?: boolean | number;
   conflict?: boolean;
 }
 
@@ -56,12 +59,14 @@ export interface CreateHabitRequest {
   category: string;
   target_count: number;
   target_unit: string;
-  frequency: 'daily' | 'weekly' | 'monthly';
+  frequency_type: 'daily' | 'weekly' | 'monthly';
+  frequency_count?: number | null;
+  frequency_days?: string[] | number[] | null;
   bg_color: string;
 }
 
 export interface UpdateHabitRequest extends Partial<CreateHabitRequest> {
-  is_active?: boolean;
+  is_active?: boolean | number;
 }
 
 export interface HabitStats {
@@ -126,7 +131,6 @@ export const HABIT_COLORS = [
   'bg-orange-500',
   'bg-cyan-500'
 ] as const;
-
 
 declare module 'expo-sqlite' {
   export interface SQLiteDatabase {

@@ -84,7 +84,7 @@ export class HabitService {
     }
   }
 
-private async enrichHabitsWithCompletions(
+  private async enrichHabitsWithCompletions(
     habits: LocalHabitRecord[], 
     userId: string
   ): Promise<HabitWithCompletion[]> {
@@ -142,44 +142,50 @@ private async enrichHabitsWithCompletions(
   }
 
   // Create habit (offline-first)
-  public async createHabit(habitData: CreateHabitRequest): Promise<Habit> {
-    const userId = await this.getCurrentUserId();
-    if (!userId) throw new Error('User not authenticated');
+public async createHabit(habitData: CreateHabitRequest): Promise<Habit> {
+  const userId = await this.getCurrentUserId();
+  if (!userId) throw new Error('User not authenticated');
 
-    const now = new Date().toISOString();
-    const habit: LocalHabitRecord = {
-      id: uuid.v4() as string,
-      user_id: userId,
-      title: habitData.title,
-      icon: habitData.icon,
-      description: habitData.description,
-      category: habitData.category,
-      target_count: habitData.target_count,
-      target_unit: habitData.target_unit,
-      frequency: habitData.frequency,
-      bg_color: habitData.bg_color,
-      is_active: true,
-      created_at: now,
-      updated_at: now,
-      is_dirty: true,
-      sync_status: 'pending'
-    };
+  const now = new Date().toISOString();
+  
+  // FIX: Ensure frequency_type always has a valid value
+  const habit: LocalHabitRecord = {
+    id: uuid.v4() as string,
+    user_id: userId,
+    title: habitData.title,
+    icon: habitData.icon,
+    description: habitData.description,
+    category: habitData.category,
+    target_count: habitData.target_count,
+    target_unit: habitData.target_unit,
+    // FIX: Use nullish coalescing to ensure frequency_type is never null/undefined
+    frequency_type: habitData.frequency_type || 'daily',
+    frequency_count: habitData.frequency_count || null,
+    frequency_days: habitData.frequency_days || null,
+    bg_color: habitData.bg_color,
+    is_active: true,
+    created_at: now,
+    updated_at: now,
+    is_dirty: true,
+    sync_status: 'pending'
+  };
 
-    try {
-      // Save to local DB immediately
-      await this.db.insertHabit(habit);
+  try {
+    // Save to local DB immediately
+    await this.db.insertHabit(habit);
 
-      // Try to sync if online
-      if (this.isOnline()) {
-        await this.syncSingleHabit(habit);
-      }
-
-      return habit;
-    } catch (error) {
-      console.error('Error creating habit:', error);
-      throw error;
+    // Try to sync if online
+    if (this.isOnline()) {
+      await this.syncSingleHabit(habit);
     }
+
+    return habit;
+  } catch (error) {
+    console.error('Error creating habit:', error);
+    throw error;
   }
+}
+
 
   // Update habit (offline-first)
   public async updateHabit(habitId: string, updates: UpdateHabitRequest): Promise<void> {
@@ -324,7 +330,7 @@ private async enrichHabitsWithCompletions(
       }).length;
 
       // Calculate overall completion rate (last 30 days)
-      const last30Days:any = [];
+      const last30Days: string[] = [];
       for (let i = 0; i < 30; i++) {
         const date = new Date();
         date.setDate(date.getDate() - i);
@@ -335,7 +341,7 @@ private async enrichHabitsWithCompletions(
       let totalCompleted = 0;
 
       habits.forEach(habit => {
-        last30Days.forEach((date:any) => {
+        last30Days.forEach((date: string) => {
           const completion = completions.find(c => 
             c.habit_id === habit.id && c.completion_date === date
           );
@@ -408,49 +414,10 @@ private async enrichHabitsWithCompletions(
     }
   }
 
-  private async syncHabitsToServer(result: SyncResult): Promise<void> {
-    const unsyncedHabits = await this.db.getUnsynced('habits') as LocalHabitRecord[];
-    
-    for (const habit of unsyncedHabits) {
-      try {
-        const habitData = {
-          id: habit.id,
-          user_id: habit.user_id,
-          title: habit.title,
-          icon: habit.icon,
-          description: habit.description,
-          category: habit.category,
-          target_count: habit.target_count,
-          target_unit: habit.target_unit,
-          frequency: habit.frequency,
-          bg_color: habit.bg_color,
-          is_active: habit.is_active,
-          created_at: habit.created_at,
-          updated_at: habit.updated_at
-        };
-
-        // Use upsert to handle both insert and update cases
-        const { error } = await supabase
-          .from('habits')
-          .upsert([habitData], {
-            onConflict: 'id'
-          });
-
-        if (error) throw error;
-
-        // Mark as synced
-        await this.db.markAsSynced('habits', habit.id);
-        result.synced_habits++;
-      } catch (error) {
-        console.error(`Error syncing habit ${habit.id}:`, error);
-        result.errors.push(`Failed to sync habit: ${habit.title}`);
-        // Mark as error
-        await this.db.updateHabit(habit.id, { sync_status: 'error' });
-      }
-    }
-  }
-
-  private async syncSingleHabit(habit: LocalHabitRecord): Promise<void> {
+private async syncHabitsToServer(result: SyncResult): Promise<void> {
+  const unsyncedHabits = await this.db.getUnsynced('habits') as LocalHabitRecord[];
+  
+  for (const habit of unsyncedHabits) {
     try {
       const habitData = {
         id: habit.id,
@@ -461,14 +428,17 @@ private async enrichHabitsWithCompletions(
         category: habit.category,
         target_count: habit.target_count,
         target_unit: habit.target_unit,
-        frequency: habit.frequency,
+        // FIX: Ensure frequency_type is never null when syncing
+        frequency_type: habit.frequency_type || 'daily',
+        frequency_count: habit.frequency_count,
+        frequency_days: habit.frequency_days,
         bg_color: habit.bg_color,
         is_active: habit.is_active,
         created_at: habit.created_at,
         updated_at: habit.updated_at
       };
 
-      // Use upsert instead of complex insert/update logic
+      // Use upsert to handle both insert and update cases
       const { error } = await supabase
         .from('habits')
         .upsert([habitData], {
@@ -479,12 +449,55 @@ private async enrichHabitsWithCompletions(
 
       // Mark as synced
       await this.db.markAsSynced('habits', habit.id);
+      result.synced_habits++;
     } catch (error) {
+      console.error(`Error syncing habit ${habit.id}:`, error);
+      result.errors.push(`Failed to sync habit: ${habit.title}`);
       // Mark as error
       await this.db.updateHabit(habit.id, { sync_status: 'error' });
-      throw error;
     }
   }
+}
+
+private async syncSingleHabit(habit: LocalHabitRecord): Promise<void> {
+  try {
+    const habitData = {
+      id: habit.id,
+      user_id: habit.user_id,
+      title: habit.title,
+      icon: habit.icon,
+      description: habit.description,
+      category: habit.category,
+      target_count: habit.target_count,
+      target_unit: habit.target_unit,
+      // FIX: Ensure frequency_type is never null when syncing
+      frequency_type: habit.frequency_type || 'daily',
+      frequency_count: habit.frequency_count,
+      frequency_days: habit.frequency_days,
+      bg_color: habit.bg_color,
+      is_active: habit.is_active,
+      created_at: habit.created_at,
+      updated_at: habit.updated_at
+    };
+
+    // Use upsert instead of complex insert/update logic
+    const { error } = await supabase
+      .from('habits')
+      .upsert([habitData], {
+        onConflict: 'id'
+      });
+
+    if (error) throw error;
+
+    // Mark as synced
+    await this.db.markAsSynced('habits', habit.id);
+  } catch (error) {
+    // Mark as error
+    await this.db.updateHabit(habit.id, { sync_status: 'error' });
+    throw error;
+  }
+}
+
 
   private async syncHabitsFromServer(result: SyncResult): Promise<void> {
     const userId = await this.getCurrentUserId();
@@ -532,7 +545,7 @@ private async enrichHabitsWithCompletions(
                 conflict_data: {
                   local_version: localHabit,
                   remote_version: serverHabit,
-                  conflicted_fields
+                  conflicted_fields: conflictedFields
                 },
                 sync_status: 'conflict'
               });
@@ -643,10 +656,28 @@ private async enrichHabitsWithCompletions(
 
   private findConflictedFields(local: any, remote: any): string[] {
     const conflictedFields: string[] = [];
-    const fieldsToCheck = ['title', 'icon', 'description', 'category', 'target_count', 'target_unit', 'frequency', 'bg_color'];
+    const fieldsToCheck = [
+      'title', 
+      'icon', 
+      'description', 
+      'category', 
+      'target_count', 
+      'target_unit', 
+      'frequency_type',
+      'frequency_count',
+      'frequency_days',
+      'bg_color'
+    ];
 
     for (const field of fieldsToCheck) {
-      if (local[field] !== remote[field]) {
+      // Deep comparison for frequency_days array
+      if (field === 'frequency_days') {
+        const localDays = JSON.stringify(local[field]);
+        const remoteDays = JSON.stringify(remote[field]);
+        if (localDays !== remoteDays) {
+          conflictedFields.push(field);
+        }
+      } else if (local[field] !== remote[field]) {
         conflictedFields.push(field);
       }
     }

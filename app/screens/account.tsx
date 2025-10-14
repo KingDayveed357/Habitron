@@ -42,6 +42,8 @@ import {
 } from 'lucide-react-native';
 import { useTheme } from '@/context/ThemeContext';
 import { useAuth } from '@/hooks/useAuth';
+import NavigationButton from '../components/ui/NavButton';
+import BackButton from '../components/ui/BackButton';
 
 interface UserStats {
   streakDays: number;
@@ -301,26 +303,27 @@ const AccountScreen: React.FC = () => {
     );
   }
 
-  if (!user) {
-    return (
-      <SafeAreaView className="flex-1 bg-gray-50 dark:bg-black justify-center items-center">
-        <Text className="text-xl font-bold text-gray-800 dark:text-white mb-4">Not Authenticated</Text>
-        <TouchableOpacity
-          onPress={() => router.replace('/')}
-          className="bg-blue-500 px-6 py-3 rounded-lg"
-        >
-          <Text className="text-white font-semibold">Go to Login</Text>
-        </TouchableOpacity>
-      </SafeAreaView>
-    );
-  }
+  // if (!user) {
+  //   return (
+  //     <SafeAreaView className="flex-1 bg-gray-50 dark:bg-black justify-center items-center">
+  //       <Text className="text-xl font-bold text-gray-800 dark:text-white mb-4">Not Authenticated</Text>
+  //       <TouchableOpacity
+  //         onPress={() => router.replace('/')}
+  //         className="bg-blue-500 px-6 py-3 rounded-lg"
+  //       >
+  //         <Text className="text-white font-semibold">Go to Login</Text>
+  //       </TouchableOpacity>
+  //     </SafeAreaView>
+  //   );
+  // }
 
   return (
     <SafeAreaView className="flex-1 bg-gray-50 dark:bg-black">
       <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
         {/* Header */}
+
         <View className="px-6 pb-6">
-          <Text className="text-3xl font-bold text-gray-800 dark:text-white mb-2">Account</Text>
+          <Text className="text-2xl font-bold text-gray-800 dark:text-white mb-2">Profile Settings</Text>
           <Text className="text-gray-600 dark:text-gray-400">Manage your profile and preferences</Text>
         </View>
 

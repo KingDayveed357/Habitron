@@ -12,13 +12,15 @@ export class DatabaseService {
   // Habits CRUD operations
   public async insertHabit(habit: LocalHabitRecord): Promise<void> {
     const conflictData = habit.conflict_data ? JSON.stringify(habit.conflict_data) : null;
+    const frequencyDays = habit.frequency_days ? JSON.stringify(habit.frequency_days) : null;
 
     await this.db.runAsync(
      `INSERT OR REPLACE INTO habits (
       id, user_id, title, icon, description, category, target_count, 
-      target_unit, frequency, bg_color, is_active, created_at, updated_at,
+      target_unit, frequency_type, frequency_count, frequency_days, 
+      bg_color, is_active, created_at, updated_at,
       last_synced_at, is_dirty, sync_status, conflict_data
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       habit.id,
       habit.user_id,
@@ -28,7 +30,9 @@ export class DatabaseService {
       habit.category,
       habit.target_count,
       habit.target_unit,
-      habit.frequency,
+      habit.frequency_type || 'daily',
+      habit.frequency_count || null,
+      frequencyDays,
       habit.bg_color,
       habit.is_active ? 1 : 0,
       habit.created_at,
@@ -52,7 +56,8 @@ export class DatabaseService {
       is_active: row.is_active === 1,
       is_dirty: row.is_dirty === 1,
       conflict: row.conflict_data ? true : false,
-      conflict_data: row.conflict_data ? JSON.parse(row.conflict_data) : undefined
+      conflict_data: row.conflict_data ? JSON.parse(row.conflict_data as string) : undefined,
+      frequency_days: row.frequency_days ? JSON.parse(row.frequency_days as unknown as string) : null
     }));
   }
 
@@ -62,6 +67,9 @@ export class DatabaseService {
 
     for (const [key, value] of Object.entries(updates)) {
       if (key === 'conflict_data') {
+        fields.push(`${key} = ?`);
+        values.push(value ? JSON.stringify(value) : null);
+      } else if (key === 'frequency_days') {
         fields.push(`${key} = ?`);
         values.push(value ? JSON.stringify(value) : null);
       } else if (key === 'is_active' || key === 'is_dirty') {
@@ -132,9 +140,6 @@ export class DatabaseService {
     }));
   }
 
-
-
-
   public async getCompletionByDate(habitId: string, userId: string, date: string): Promise<LocalCompletionRecord | null> {
     const result = await this.db.getFirstAsync<LocalCompletionRecord>(
       `SELECT * FROM habit_completions WHERE habit_id = ? AND user_id = ? AND completion_date = ?`,
@@ -195,8 +200,6 @@ export class DatabaseService {
       await this.insertCompletion(completion);
     }
   }
-  
-
 
   public async getTodayCompletion(habitId: string, userId: string): Promise<LocalCompletionRecord | null> {
     const today = new Date().toISOString().split('T')[0];
@@ -238,7 +241,6 @@ export class DatabaseService {
     );
   }
 
-
   // Method to clean up duplicate completions (run during database maintenance)
   public async cleanupDuplicateCompletions(userId: string): Promise<void> {
     await this.db.runAsync(`
@@ -262,7 +264,8 @@ export class DatabaseService {
     return result.map(row => ({
       ...row,
       is_dirty: row.is_dirty === 1,
-      is_active: table === 'habits' ? row.is_active === 1 : undefined
+      is_active: table === 'habits' ? row.is_active === 1 : undefined,
+      frequency_days: table === 'habits' && row.frequency_days ? JSON.parse(row.frequency_days) : null
     }));
   }
 

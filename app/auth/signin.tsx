@@ -285,14 +285,14 @@ export default function SignIn({ onLoginSuccess, onForgotPassword }: Props) {
 
           {/* Remember me and Forgot Password */}
           <View className='flex-row justify-between items-center mb-4'>
-            <TouchableOpacity onPress={() => setRememberMe(!rememberMe)} className="flex-row items-center">
+            {/* <TouchableOpacity onPress={() => setRememberMe(!rememberMe)} className="flex-row items-center">
               <View className={`w-5 h-5 border rounded mr-2 items-center justify-center ${rememberMe ? 'bg-primary' : 'border-gray-400'}`}>
                 {rememberMe && <CheckIcon size={14} color="#fff" />}
               </View>
-              <Text className="text-body text-gray-600 dark:text-gray-300">
+              <Text className="text-body text-gray-700 dark:text-gray-300">
                 Remember me
               </Text>
-            </TouchableOpacity>
+            </TouchableOpacity> */}
             
             <TouchableOpacity onPress={() => router.push('/auth/forgotpassword')} className='my-auto'>
               <Text className='text-body text-primary'>Forgot Password?</Text>

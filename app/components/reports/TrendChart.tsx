@@ -1,3 +1,5 @@
+// components/reports/TrendChart.tsx
+
 import React, { useState, useEffect, useRef } from "react";
 import { View, Text, TouchableOpacity, Animated, Dimensions } from "react-native";
 

@@ -1,44 +1,278 @@
+// app/(tabs)/ai_coach.tsx - FIXED VERSION
 import { 
   View, 
   Text, 
   ScrollView, 
   TouchableOpacity, 
   ActivityIndicator,
-  RefreshControl
+  RefreshControl,
+  Alert,
+  TextInput,
+  Modal
 } from 'react-native'
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { Ionicons } from '@expo/vector-icons'
 import { LinearGradient } from 'expo-linear-gradient'
 import { useAuth } from '@/hooks/useAuth'
-import { useAICoach } from '@/hooks/useAICoach'
+import { useInsights } from '@/hooks/useInsights'
+import { useHabits } from '@/hooks/usehabits'
 import { useRouter } from 'expo-router'
+import { Chat, ChatWithPreview, chatService } from '@/services/AIServices/chat'
 
 const AICoach = () => {
   const { user } = useAuth()
   const router = useRouter()
+  const { habits, stats } = useHabits()
   
-  const {
-    messages,
-    insights,
-    loadingInsights,
-    refreshInsights,
-    suggestions,
-    loadingSuggestions,
-    generateSuggestions,
-    error,
-    clearError
-  } = useAICoach()
+  // Memoize context to prevent unnecessary re-renders
+const insightsContext = useMemo(() => ({
+  habits: habits || [],
+  stats: stats || {
+    totalHabits: 0,
+    completedToday: 0,
+    completionRate: 0,
+    activeStreak: 0
+  },
+  userProfile: {
+    name: user?.user_metadata?.name || user?.email?.split('@')[0] || 'User',
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
+  },
+  timeframe: 'week' as const // Add explicit timeframe
+}), [
+  habits?.length, 
+  stats?.totalHabits, 
+  stats?.completedToday, 
+  stats?.completionRate,
+  stats?.activeStreak,
+  user?.id
+])
 
-  const [activeTab, setActiveTab] = useState<'insights' | 'suggestions'>('insights')
+const {
+  insights,
+  loadingInsights,
+  refreshInsights,
+  suggestions,
+  loadingSuggestions,
+  generateSuggestions,
+  error: insightsError,
+  clearError: clearInsightsError
+} = useInsights({
+  autoLoad: true,
+  context: insightsContext
+})
 
-  // Clear error after 5 seconds
+
+
+  const [chats, setChats] = useState<ChatWithPreview[]>([])
+  const [loadingChats, setLoadingChats] = useState(true)
+  const [chatsError, setChatsError] = useState<string | null>(null)
+  const [activeTab, setActiveTab] = useState<'chats' | 'insights' | 'suggestions'>('chats')
+  const [editingChatId, setEditingChatId] = useState<string | null>(null)
+  const [editTitle, setEditTitle] = useState('')
+  const [showRenameModal, setShowRenameModal] = useState(false)
+  const [creatingChat, setCreatingChat] = useState(false)
+
+  const subscriptionRef = useRef<any>(null)
+  const mountedRef = useRef(true)
+
+
+   const isInitialLoading = loadingInsights && insights.length === 0
+const isRefreshing = loadingInsights && insights.length > 0
+
+
+const handleRefreshInsights = useCallback(async () => {
+  try {
+    clearInsightsError()
+    await refreshInsights()
+  } catch (error) {
+    console.error('Refresh failed:', error)
+  }
+}, [refreshInsights, clearInsightsError])
+
+const handleGenerateSuggestions = useCallback(async () => {
+  try {
+    clearInsightsError()
+    await generateSuggestions()
+  } catch (error) {
+    console.error('Generate suggestions failed:', error)
+  }
+}, [generateSuggestions, clearInsightsError])
+
+  // Load all chats
   useEffect(() => {
-    if (error) {
-      const timer = setTimeout(clearError, 5000)
+    if (!user) {
+      setLoadingChats(false)
+      return
+    }
+
+    const loadChats = async () => {
+      try {
+        setLoadingChats(true)
+        const userChats = await chatService.getUserChatsWithPreview(user.id)
+        setChats(userChats)
+        setChatsError(null)
+      } catch (error: any) {
+        console.error('Failed to load chats:', error)
+        setChatsError(error.message || 'Failed to load chats')
+      } finally {
+        setLoadingChats(false)
+      }
+    }
+
+    loadChats()
+  }, [user])
+
+  // Subscribe to real-time chat updates
+  useEffect(() => {
+    if (!user) return
+
+    const subscription = chatService.subscribeToChats(
+      user.id,
+      (updatedChat: Chat) => {
+        if (!mountedRef.current) return
+        
+        setChats(prevChats => {
+          const index = prevChats.findIndex(c => c.id === updatedChat.id)
+          if (index === -1) return prevChats
+          
+          const updated = [...prevChats]
+          updated[index] = {
+            ...updated[index],
+            ...updatedChat
+          }
+          
+          return updated.sort((a, b) => 
+            new Date(b.last_activity_at).getTime() - new Date(a.last_activity_at).getTime()
+          )
+        })
+      },
+      (deletedChatId: string) => {
+        if (!mountedRef.current) return
+        setChats(prevChats => prevChats.filter(c => c.id !== deletedChatId))
+      }
+    )
+
+    subscriptionRef.current = subscription
+
+    return () => {
+      if (subscriptionRef.current) {
+        subscriptionRef.current.unsubscribe()
+      }
+    }
+  }, [user])
+
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
+
+  const refreshChats = async () => {
+    if (!user) return
+    
+    try {
+      setLoadingChats(true)
+      const userChats = await chatService.getUserChatsWithPreview(user.id)
+      setChats(userChats)
+      setChatsError(null)
+    } catch (error: any) {
+      console.error('Failed to refresh chats:', error)
+      setChatsError(error.message || 'Failed to refresh chats')
+    } finally {
+      setLoadingChats(false)
+    }
+  }
+
+  const clearChatsError = () => setChatsError(null)
+
+  useEffect(() => {
+    if (insightsError) {
+      const timer = setTimeout(clearInsightsError, 5000)
       return () => clearTimeout(timer)
     }
-  }, [error, clearError])
+  }, [insightsError, clearInsightsError])
+
+  useEffect(() => {
+    if (chatsError) {
+      const timer = setTimeout(clearChatsError, 5000)
+      return () => clearTimeout(timer)
+    }
+  }, [chatsError])
+
+  const handleCreateChat = async () => {
+    if (creatingChat || !user) return
+    
+    try {
+      setCreatingChat(true)
+      const newChat = await chatService.createChat(user.id, 'New Chat', 'default')
+      if (newChat) {
+        const newChatWithPreview: ChatWithPreview = {
+          ...newChat,
+          message_count: 0,
+          memory_count: 0
+        }
+        setChats(prev => [newChatWithPreview, ...prev])
+        
+        router.push({
+          pathname: '/screens/ai-chat',
+          params: { chatId: newChat.id }
+        })
+      }
+    } catch (error) {
+      console.error('Failed to create chat:', error)
+      Alert.alert('Error', 'Failed to create new chat. Please try again.')
+    } finally {
+      setCreatingChat(false)
+    }
+  }
+
+  const handleOpenChat = (chatId: string) => {
+    router.push({
+      pathname: '/screens/ai-chat',
+      params: { chatId }
+    })
+  }
+
+  const handleRenameChat = (chat: ChatWithPreview) => {
+    setEditingChatId(chat.id)
+    setEditTitle(chat.title)
+    setShowRenameModal(true)
+  }
+
+  const handleSaveRename = async () => {
+    if (editingChatId && editTitle.trim()) {
+      try {
+        await chatService.updateChatTitle(editingChatId, editTitle.trim())
+        setShowRenameModal(false)
+        setEditingChatId(null)
+        setEditTitle('')
+      } catch (error) {
+        Alert.alert('Error', 'Failed to rename chat')
+      }
+    }
+  }
+
+  const handleDeleteChat = (chatId: string, chatTitle: string) => {
+    Alert.alert(
+      'Delete Chat',
+      `Are you sure you want to delete "${chatTitle}"?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await chatService.deleteChat(chatId)
+            } catch (error) {
+              Alert.alert('Error', 'Failed to delete chat')
+            }
+          }
+        }
+      ]
+    )
+  }
 
   const handleCreateHabitFromSuggestion = (suggestion: any) => {
     router.push({
@@ -54,52 +288,86 @@ const AICoach = () => {
     })
   }
 
-  const renderInsightIcon = (type: string) => {
-    switch (type) {
-      case 'trend': return '📈'
-      case 'achievement': return '🏆'
-      case 'warning': return '⚠️'
-      case 'tip': return '💡'
-      case 'motivation': return '🔥'
-      default: return '✨'
+  const formatDate = (dateString?: string) => {
+    if (!dateString) return 'No messages yet'
+    const date = new Date(dateString)
+    const now = new Date()
+    const diffMs = now.getTime() - date.getTime()
+    const diffMins = Math.floor(diffMs / 60000)
+    const diffHours = Math.floor(diffMs / 3600000)
+    const diffDays = Math.floor(diffMs / 86400000)
+
+    if (diffMins < 1) return 'Just now'
+    if (diffMins < 60) return `${diffMins}m ago`
+    if (diffHours < 24) return `${diffHours}h ago`
+    if (diffDays === 1) return 'Yesterday'
+    if (diffDays < 7) return `${diffDays}d ago`
+    return date.toLocaleDateString()
+  }
+
+  const truncateMessage = (message?: string, maxLength: number = 60) => {
+    if (!message) return 'Start a conversation...'
+    return message.length > maxLength ? message.substring(0, maxLength) + '...' : message
+  }
+
+  const getPersonalityIcon = (personality: string) => {
+    const icons: Record<string, string> = {
+      default: '🤖',
+      motivator: '🔥',
+      calm: '🧘',
+      analyst: '📊',
+      friend: '👋'
     }
+    return icons[personality] || '🤖'
   }
 
   const renderInsightColor = (type: string, priority: string) => {
     if (priority === 'high') {
       switch (type) {
-        case 'achievement': return 'bg-green-100 dark:bg-green-900/20 border-green-200'
-        case 'warning': return 'bg-red-100 dark:bg-red-900/20 border-red-200'
-        default: return 'bg-blue-100 dark:bg-blue-900/20 border-blue-200'
+        case 'achievement': return 'bg-green-50 dark:bg-green-900/20 border-green-300 dark:border-green-700'
+        case 'warning': return 'bg-red-50 dark:bg-red-900/20 border-red-300 dark:border-red-700'
+        case 'trend': return 'bg-blue-50 dark:bg-blue-900/20 border-blue-300 dark:border-blue-700'
+        default: return 'bg-purple-50 dark:bg-purple-900/20 border-purple-300 dark:border-purple-700'
       }
     }
-    return 'bg-gray-100 dark:bg-gray-900/20 border-gray-200'
+    return 'bg-gray-50 dark:bg-gray-800/50 border-gray-200 dark:border-gray-700'
+  }
+
+  const renderDifficultyBadge = (difficulty: string) => {
+    const colors: Record<string, string> = {
+      easy: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300',
+      medium: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300',
+      hard: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'
+    }
+    return colors[difficulty] || colors.medium
   }
 
   if (!user) {
     return (
-      <SafeAreaView className='flex-1 app-background'>
+      <SafeAreaView className='flex-1 bg-gray-50 dark:bg-gray-900'>
         <View className='flex-1 justify-center items-center px-6'>
-          <Text className='text-xl font-bold text-gray-800 dark:text-white mb-2'>
-            Sign In Required
-          </Text>
-          <Text className='text-gray-600 dark:text-gray-400 text-center mb-6'>
-            You need to be signed in to access your AI coach.
-          </Text>
-          <TouchableOpacity
-            onPress={() => router.push('/auth/signin')}
-            className='bg-indigo-500 px-8 py-3 rounded-xl'
-          >
-            <Text className='text-white font-semibold'>Sign In</Text>
-          </TouchableOpacity>
+          <View className='bg-white dark:bg-gray-800 rounded-2xl p-8 items-center shadow-lg'>
+            <Ionicons name="lock-closed" size={48} color="#6366F1" />
+            <Text className='text-xl font-bold text-gray-800 dark:text-white mt-4 mb-2'>
+              Sign In Required
+            </Text>
+            <Text className='text-gray-600 dark:text-gray-400 text-center mb-6'>
+              Access your personalized AI coach
+            </Text>
+            <TouchableOpacity
+              onPress={() => router.push('/auth/signin')}
+              className='bg-indigo-500 px-8 py-3 rounded-xl'
+            >
+              <Text className='text-white font-semibold'>Sign In</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </SafeAreaView>
     )
   }
 
   return (
-    <SafeAreaView className='flex-1 app-background' edges={['top']}>
-      {/* Header */}
+    <SafeAreaView className='flex-1 bg-gray-50 dark:bg-gray-900' edges={['top']}>
       <LinearGradient 
         colors={['#8B5CF6', '#3B82F6']}
         start={{ x: 0, y: 0 }}
@@ -111,229 +379,479 @@ const AICoach = () => {
             <Ionicons name="sparkles" size={24} color="white" />
             <Text className='text-white text-xl font-bold ml-2'>AI Coach</Text>
           </View>
-          <View className='flex-row space-x-2'>
+          {activeTab === 'chats' && (
             <TouchableOpacity 
-              onPress={() => router.push('/screens/ai-chat')} 
-              className='bg-white/20 rounded-lg px-3 py-2'
+              onPress={handleCreateChat} 
+              disabled={creatingChat}
+              className='bg-white/20 rounded-full w-10 h-10 items-center justify-center'
             >
-              <View className='flex-row items-center'>
-                <Ionicons name="chatbubble-ellipses" size={16} color="white" />
-                <Text className='text-white text-sm font-medium ml-1'>Chat</Text>
-              </View>
+              {creatingChat ? (
+                <ActivityIndicator size="small" color="white" />
+              ) : (
+                <Ionicons name="add" size={24} color="white" />
+              )}
             </TouchableOpacity>
-          </View>
+          )}
         </View>
-        <Text className='text-white/90 text-md'>
-          Your personal habit optimization assistant
+        <Text className='text-white/90 text-sm'>
+          {activeTab === 'chats' 
+            ? `${chats.length} conversation${chats.length !== 1 ? 's' : ''}`
+            : 'Powered by AI • Personalized for you'}
         </Text>
       </LinearGradient>
 
-      {/* Chat Quick Access */}
-      <TouchableOpacity
-        onPress={() => router.push('/screens/ai-chat')}
-        className='mx-4 mt-4 bg-gradient-to-r from-indigo-500 to-purple-600 rounded-xl p-4 shadow-lg'
-      >
-        <View className='flex-row items-center justify-between'>
-          <View className='flex-row items-center'>
-            <View className='bg-white/20 rounded-full w-12 h-12 items-center justify-center mr-3'>
-              <Ionicons name="chatbubble-ellipses" size={24} color="white" />
-            </View>
-            <View>
-              <Text className='text-white font-bold text-lg'>Start Chat</Text>
-              <Text className='text-white/80 text-sm'>
-                {messages.length > 0 
-                  ? `${messages.length} messages in conversation`
-                  : 'Ask me anything about your habits'
-                }
-              </Text>
-            </View>
-          </View>
-          <Ionicons name="arrow-forward" size={20} color="white" />
-        </View>
-      </TouchableOpacity>
-
-      {/* Tab Navigation */}
-      <View className='flex-row bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 mx-4 mt-4 rounded-xl overflow-hidden'>
-        {(['insights', 'suggestions'] as const).map((tab) => (
-          <TouchableOpacity
-            key={tab}
-            className={`flex-1 py-4 items-center ${
-              activeTab === tab 
-                ? 'bg-indigo-50 dark:bg-indigo-900/20' 
-                : ''
-            }`}
-            onPress={() => setActiveTab(tab)}
-          >
-            <Text className={`capitalize font-medium ${
-              activeTab === tab 
-                ? 'text-indigo-600 dark:text-indigo-400' 
-                : 'text-gray-600 dark:text-gray-400'
-            }`}>
-              {tab}
-              {tab === 'suggestions' && loadingSuggestions && (
-                <ActivityIndicator size="small" color="#6366F1" style={{ marginLeft: 8 }} />
-              )}
-            </Text>
-          </TouchableOpacity>
-        ))}
+      <View className='flex-row bg-white dark:bg-gray-800 mx-4 mt-4 rounded-xl overflow-hidden shadow-sm border border-gray-100 dark:border-gray-700'>
+        <TouchableOpacity
+          className={`flex-1 py-3 items-center ${
+            activeTab === 'chats' ? 'bg-indigo-50 dark:bg-indigo-900/20' : ''
+          }`}
+          onPress={() => setActiveTab('chats')}
+        >
+          <Text className={`font-semibold text-sm ${
+            activeTab === 'chats' 
+              ? 'text-indigo-600 dark:text-indigo-400' 
+              : 'text-gray-600 dark:text-gray-400'
+          }`}>
+            Chats
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          className={`flex-1 py-3 items-center ${
+            activeTab === 'insights' ? 'bg-indigo-50 dark:bg-indigo-900/20' : ''
+          }`}
+          onPress={() => setActiveTab('insights')}
+        >
+          <Text className={`font-semibold text-sm ${
+            activeTab === 'insights' 
+              ? 'text-indigo-600 dark:text-indigo-400' 
+              : 'text-gray-600 dark:text-gray-400'
+          }`}>
+            Insights
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          className={`flex-1 py-3 items-center ${
+            activeTab === 'suggestions' ? 'bg-indigo-50 dark:bg-indigo-900/20' : ''
+          }`}
+          onPress={() => setActiveTab('suggestions')}
+        >
+          <Text className={`font-semibold text-sm ${
+            activeTab === 'suggestions' 
+              ? 'text-indigo-600 dark:text-indigo-400' 
+              : 'text-gray-600 dark:text-gray-400'
+          }`}>
+            Suggestions
+          </Text>
+        </TouchableOpacity>
       </View>
 
-      {/* Error Banner */}
-      {error && (
-        <View className='bg-red-100 dark:bg-red-900/20 px-4 py-3 mx-4 mt-2 rounded-lg border-l-4 border-red-500'>
+      {(insightsError || chatsError) && (
+        <View className='bg-red-50 dark:bg-red-900/20 px-4 py-3 mx-4 mt-3 rounded-xl border border-red-200 dark:border-red-800'>
           <View className='flex-row items-center'>
-            <Ionicons name="alert-circle" size={16} color="#EF4444" />
-            <Text className='text-red-700 dark:text-red-400 ml-2 flex-1'>{error}</Text>
-            <TouchableOpacity onPress={clearError}>
-              <Ionicons name="close" size={16} color="#EF4444" />
+            <Ionicons name="alert-circle" size={18} color="#EF4444" />
+            <Text className='text-red-700 dark:text-red-400 ml-2 flex-1 text-sm'>
+              {insightsError || chatsError}
+            </Text>
+            <TouchableOpacity onPress={() => {
+              clearInsightsError()
+              clearChatsError()
+            }}>
+              <Ionicons name="close" size={18} color="#EF4444" />
             </TouchableOpacity>
           </View>
         </View>
       )}
 
-      {/* Content */}
       {activeTab === 'insights' && (
+  <ScrollView 
+    className='flex-1 px-4 py-4'
+    showsVerticalScrollIndicator={false}
+    refreshControl={
+      <RefreshControl 
+        refreshing={isRefreshing} 
+        onRefresh={handleRefreshInsights}
+        colors={['#6366F1']}
+        tintColor="#6366F1"
+      />
+    }
+  >
+    {isInitialLoading ? (
+      <View className='flex-1 justify-center items-center py-16'>
+        <ActivityIndicator size="large" color="#6366F1" />
+        <Text className='text-gray-500 dark:text-gray-400 mt-4'>
+          Generating personalized insights...
+        </Text>
+      </View>
+    ) : (
+      <View className='pb-6'>
+        <View className='flex-row items-center justify-between mb-4'>
+          <Text className='text-lg font-bold text-gray-800 dark:text-white'>
+            Today's Insights
+          </Text>
+          <TouchableOpacity 
+            onPress={handleRefreshInsights} 
+            disabled={loadingInsights}
+            className='bg-indigo-100 dark:bg-indigo-900/30 px-3 py-2 rounded-lg flex-row items-center'
+          >
+            <Ionicons 
+              name={loadingInsights ? "sync" : "refresh"} 
+              size={16} 
+              color="#6366F1"
+              style={loadingInsights ? { transform: [{ rotate: '180deg' }] } : undefined}
+            />
+            <Text className='text-indigo-600 dark:text-indigo-400 text-sm font-medium ml-1.5'>
+              {loadingInsights ? 'Refreshing...' : 'Refresh'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+        
+        {insights.length === 0 ? (
+          <View className='bg-white dark:bg-gray-800 rounded-2xl p-8 items-center border border-gray-100 dark:border-gray-700'>
+            <Text className='text-4xl mb-3'>🤖</Text>
+            <Text className='text-gray-700 dark:text-gray-300 font-semibold mb-2'>
+              No insights available
+            </Text>
+            <Text className='text-gray-500 dark:text-gray-400 text-sm text-center mb-4'>
+              {stats?.totalHabits === 0 
+                ? 'Create habits to get personalized insights'
+                : 'Try refreshing to generate new insights'
+              }
+            </Text>
+            {stats?.totalHabits === 0 ? (
+              <TouchableOpacity
+                onPress={() => router.push('/screens/create_habit')}
+                className='bg-indigo-500 px-6 py-2.5 rounded-xl'
+              >
+                <Text className='text-white font-semibold'>Create First Habit</Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity
+                onPress={handleRefreshInsights}
+                disabled={loadingInsights}
+                className='bg-indigo-500 px-6 py-2.5 rounded-xl'
+              >
+                <Text className='text-white font-semibold'>
+                  {loadingInsights ? 'Generating...' : 'Generate Insights'}
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        ) : (
+          <View className='space-y-3 gap-3'>
+            {insights.map((insight) => (
+              <View 
+                key={insight.id}
+                className={`rounded-2xl p-4 border ${renderInsightColor(insight.type, insight.priority)}`}
+              >
+                <View className='flex-row items-start mb-2'>
+                  <Text className='text-2xl mr-3'>{insight.icon}</Text>
+                  <View className='flex-1'>
+                    <Text className='font-bold text-gray-900 dark:text-white mb-1 text-base'>
+                      {insight.title}
+                    </Text>
+                    <Text className='text-gray-700 dark:text-gray-300 text-sm leading-5'>
+                      {insight.description}
+                    </Text>
+                  </View>
+                </View>
+                {insight.actionable && insight.action && (
+                  <TouchableOpacity 
+                    className='bg-indigo-500 rounded-xl py-2.5 px-4 mt-3 self-start'
+                    onPress={() => {
+                      if (insight.action?.type === 'create_habit') {
+                        router.push('/screens/create_habit')
+                      }
+                    }}
+                  >
+                    <Text className='text-white text-sm font-semibold'>
+                      {insight.action.label}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            ))}
+          </View>
+        )}
+      </View>
+    )}
+  </ScrollView>
+)}
+
+     {activeTab === 'suggestions' && (
+  <ScrollView 
+    className='flex-1 px-4 py-4'
+    showsVerticalScrollIndicator={false}
+    refreshControl={
+      <RefreshControl 
+        refreshing={loadingSuggestions && suggestions.length > 0} 
+        onRefresh={handleGenerateSuggestions}
+        colors={['#6366F1']}
+        tintColor="#6366F1"
+      />
+    }
+  >
+    <View className='flex-row justify-between items-center mb-4'>
+      <Text className='text-lg font-bold text-gray-800 dark:text-white'>
+        Habit Suggestions
+      </Text>
+      <TouchableOpacity 
+        onPress={handleGenerateSuggestions}
+        disabled={loadingSuggestions}
+        className='bg-indigo-500 px-4 py-2 rounded-xl flex-row items-center'
+      >
+        {loadingSuggestions ? (
+          <>
+            <ActivityIndicator size="small" color="white" />
+            <Text className='text-white text-sm font-semibold ml-2'>Generating...</Text>
+          </>
+        ) : (
+          <>
+            <Ionicons name="bulb-outline" size={16} color="white" />
+            <Text className='text-white text-sm font-semibold ml-2'>Generate</Text>
+          </>
+        )}
+      </TouchableOpacity>
+    </View>
+
+    {loadingSuggestions && suggestions.length === 0 ? (
+      <View className='flex-1 justify-center items-center py-16'>
+        <ActivityIndicator size="large" color="#6366F1" />
+        <Text className='text-gray-500 dark:text-gray-400 mt-4'>
+          Creating personalized suggestions...
+        </Text>
+      </View>
+    ) : suggestions.length === 0 ? (
+      <View className='bg-white dark:bg-gray-800 rounded-2xl p-8 items-center border border-gray-100 dark:border-gray-700'>
+        <Text className='text-4xl mb-3'>💡</Text>
+        <Text className='font-bold text-gray-800 dark:text-white mb-2 text-base'>
+          No suggestions yet
+        </Text>
+        <Text className='text-gray-600 dark:text-gray-400 text-center text-sm mb-4'>
+          Generate AI-powered habit recommendations tailored to your progress
+        </Text>
+        <TouchableOpacity
+          onPress={handleGenerateSuggestions}
+          disabled={loadingSuggestions}
+          className='bg-indigo-500 px-6 py-2.5 rounded-xl'
+        >
+          <Text className='text-white font-semibold'>
+            {loadingSuggestions ? 'Generating...' : 'Generate Suggestions'}
+          </Text>
+        </TouchableOpacity>
+      </View>
+    ) : (
+      <View className='space-y-4 pb-6 gap-4'>
+        {suggestions.map((suggestion) => (
+          <View 
+            key={suggestion.id}
+            className='bg-white dark:bg-gray-800 rounded-2xl p-4 border border-gray-100 dark:border-gray-700'
+          >
+            <View className='flex-row items-start mb-3'>
+              <View className='w-12 h-12 bg-indigo-100 dark:bg-indigo-900/30 rounded-xl items-center justify-center mr-3'>
+                <Text className='text-2xl'>{suggestion.icon}</Text>
+              </View>
+              <View className='flex-1'>
+                <Text className='font-bold text-gray-900 dark:text-white mb-1 text-base'>
+                  {suggestion.title}
+                </Text>
+                <View className='flex-row items-center mb-2 flex-wrap'>
+                  <View className='bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded-lg mr-2 mb-1'>
+                    <Text className='text-xs text-gray-600 dark:text-gray-400'>
+                      {suggestion.category}
+                    </Text>
+                  </View>
+                  <View className={`px-2 py-1 rounded-lg mb-1 ${renderDifficultyBadge(suggestion.difficulty)}`}>
+                    <Text className='text-xs font-medium capitalize'>
+                      {suggestion.difficulty}
+                    </Text>
+                  </View>
+                </View>
+                <Text className='text-gray-700 dark:text-gray-300 text-sm mb-2 leading-5'>
+                  {suggestion.description}
+                </Text>
+                <View className='bg-indigo-50 dark:bg-indigo-900/20 p-2.5 rounded-lg mb-2'>
+                  <Text className='text-indigo-700 dark:text-indigo-300 text-xs leading-4'>
+                    💭 {suggestion.reasoning}
+                  </Text>
+                </View>
+                <View className='flex-row items-center'>
+                  <Ionicons name="time-outline" size={14} color="#6B7280" />
+                  <Text className='text-gray-500 dark:text-gray-400 text-xs ml-1'>
+                    {suggestion.targetCount} {suggestion.targetUnit} • {suggestion.estimatedTime}
+                  </Text>
+                </View>
+              </View>
+            </View>
+            <TouchableOpacity 
+              onPress={() => handleCreateHabitFromSuggestion(suggestion)}
+              className='bg-indigo-500 rounded-xl py-3 items-center'
+            >
+              <Text className='text-white font-semibold'>Add This Habit</Text>
+            </TouchableOpacity>
+          </View>
+        ))}
+      </View>
+    )}
+  </ScrollView>
+)}
+
+      {activeTab === 'chats' && (
         <ScrollView 
           className='flex-1 px-4 py-4'
+          showsVerticalScrollIndicator={false}
           refreshControl={
-            <RefreshControl refreshing={loadingInsights} onRefresh={refreshInsights} />
+            <RefreshControl refreshing={loadingChats} onRefresh={refreshChats} />
           }
         >
-          {loadingInsights ? (
-            <View className='flex-1 justify-center items-center py-12'>
+          {loadingChats && chats.length === 0 ? (
+            <View className='flex-1 justify-center items-center py-16'>
               <ActivityIndicator size="large" color="#6366F1" />
               <Text className='text-gray-500 dark:text-gray-400 mt-4'>
-                Generating personalized insights...
+                Loading chats...
               </Text>
             </View>
-          ) : (
-            <View className='space-y-4 gap-4'>
-              <Text className='text-lg font-semibold text-gray-800 dark:text-white mb-2'>
-                Today's Insights
-              </Text>
-              {insights.map((insight) => (
-                <View 
-                  key={insight.id} 
-                  className={`rounded-xl p-4 border ${renderInsightColor(insight.type, insight.priority)}`}
+          ) : chats.length === 0 ? (
+            <View className='flex-1 justify-center items-center py-16'>
+              <View className='bg-white dark:bg-gray-800 rounded-2xl p-8 items-center border border-gray-100 dark:border-gray-700'>
+                <Text className='text-6xl mb-4'>💬</Text>
+                <Text className='text-xl font-bold text-gray-800 dark:text-white mb-2'>
+                  No Chats Yet
+                </Text>
+                <Text className='text-gray-600 dark:text-gray-400 text-center mb-6'>
+                  Start a conversation with your AI coach
+                </Text>
+                <TouchableOpacity
+                  onPress={handleCreateChat}
+                  disabled={creatingChat}
+                  className='bg-indigo-500 px-6 py-3 rounded-xl flex-row items-center'
                 >
-                  <View className='flex-row items-start mb-2'>
-                    <Text className='text-2xl mr-3'>{renderInsightIcon(insight.type)}</Text>
+                  {creatingChat ? (
+                    <ActivityIndicator size="small" color="white" />
+                  ) : (
+                    <>
+                      <Ionicons name="add-circle-outline" size={20} color="white" />
+                      <Text className='text-white font-semibold ml-2'>New Chat</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : (
+            <View className='space-y-3 gap-3 pb-6'>
+              {chats.map((chat) => (
+                <TouchableOpacity
+                  key={chat.id}
+                  onPress={() => handleOpenChat(chat.id)}
+                  className='bg-white dark:bg-gray-800 rounded-2xl p-4 border border-gray-100 dark:border-gray-700 active:bg-gray-50 dark:active:bg-gray-700'
+                  activeOpacity={0.7}
+                >
+                  <View className='flex-row items-start'>
+                    <View className='bg-indigo-100 dark:bg-indigo-900/30 rounded-full w-12 h-12 items-center justify-center mr-3'>
+                      <Text className='text-2xl'>{getPersonalityIcon(chat.personality)}</Text>
+                    </View>
                     <View className='flex-1'>
-                      <Text className='font-semibold text-gray-900 dark:text-white mb-1'>
-                        {insight.title}
+                      <View className='flex-row items-center justify-between mb-1'>
+                        <Text className='font-bold text-gray-900 dark:text-white text-base flex-1' numberOfLines={1}>
+                          {chat.title}
+                        </Text>
+                        <Text className='text-xs text-gray-500 dark:text-gray-400 ml-2'>
+                          {formatDate(chat.last_message_at || chat.last_activity_at)}
+                        </Text>
+                      </View>
+                      <Text className='text-gray-600 dark:text-gray-400 text-sm mb-2' numberOfLines={2}>
+                        {chat.last_message_sender === 'user' && 'You: '}
+                        {truncateMessage(chat.last_message)}
                       </Text>
-                      <Text className='text-gray-700 dark:text-gray-300 text-sm'>
-                        {insight.description}
-                      </Text>
+                      <View className='flex-row items-center justify-between'>
+                        <View className='flex-row items-center gap-4'>
+                          <View className='flex-row items-center'>
+                            <Ionicons name="chatbubble-outline" size={14} color="#6B7280" />
+                            <Text className='text-xs text-gray-500 dark:text-gray-400 ml-1'>
+                              {chat.message_count}
+                            </Text>
+                          </View>
+                          {(chat.memory_count ?? 0) > 0 && (
+                            <View className='flex-row items-center'>
+                              <Ionicons name="bookmark" size={14} color="#6B7280" />
+                              <Text className='text-xs text-gray-500 dark:text-gray-400 ml-1'>
+                                {chat.memory_count}
+                              </Text>
+                            </View>
+                          )}
+                        </View>
+                        <View className='flex-row items-center gap-2'>
+                          <TouchableOpacity
+                            onPress={(e) => {
+                              e.stopPropagation()
+                              handleRenameChat(chat)
+                            }}
+                            className='p-2'
+                            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                          >
+                            <Ionicons name="create-outline" size={18} color="#6366F1" />
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            onPress={(e) => {
+                              e.stopPropagation()
+                              handleDeleteChat(chat.id, chat.title)
+                            }}
+                            className='p-2'
+                            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                          >
+                            <Ionicons name="trash-outline" size={18} color="#EF4444" />
+                          </TouchableOpacity>
+                        </View>
+                      </View>
                     </View>
                   </View>
-                  {insight.actionable && insight.action && (
-                    <TouchableOpacity 
-                      className='bg-indigo-500 rounded-lg py-2 px-4 mt-3 self-start'
-                      onPress={() => {
-                        if (insight.action?.type === 'create_habit') {
-                          router.push('/screens/create_habit')
-                        }
-                      }}
-                    >
-                      <Text className='text-white text-sm font-medium'>
-                        {insight.action.label}
-                      </Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
+                </TouchableOpacity>
               ))}
             </View>
           )}
         </ScrollView>
       )}
 
-      {activeTab === 'suggestions' && (
-        <ScrollView 
-          className='flex-1 px-4 py-4'
-          refreshControl={
-            <RefreshControl refreshing={loadingSuggestions} onRefresh={generateSuggestions} />
-          }
-        >
-          <View className='flex-row justify-between items-center mb-4'>
-            <Text className='text-lg font-semibold text-gray-800 dark:text-white'>
-              Habit Suggestions
+      <Modal
+        visible={showRenameModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowRenameModal(false)}
+      >
+        <View className='flex-1 bg-black/50 justify-center items-center px-6'>
+          <View className='bg-white dark:bg-gray-800 rounded-2xl p-6 w-full max-w-sm'>
+            <Text className='text-xl font-bold text-gray-900 dark:text-white mb-4'>
+              Rename Chat
             </Text>
-            <TouchableOpacity 
-              onPress={generateSuggestions}
-              disabled={loadingSuggestions}
-              className='bg-indigo-500 px-4 py-2 rounded-lg'
-            >
-              {loadingSuggestions ? (
-                <ActivityIndicator size="small" color="white" />
-              ) : (
-                <Text className='text-white text-sm font-medium'>Refresh</Text>
-              )}
-            </TouchableOpacity>
+            <TextInput
+              value={editTitle}
+              onChangeText={setEditTitle}
+              placeholder="Enter chat name"
+              placeholderTextColor="#9CA3AF"
+              className='bg-gray-100 dark:bg-gray-700 rounded-xl px-4 py-3 text-gray-900 dark:text-white mb-4'
+              autoFocus
+            />
+            <View className='flex-row gap-3'>
+              <TouchableOpacity
+                onPress={() => {
+                  setShowRenameModal(false)
+                  setEditingChatId(null)
+                  setEditTitle('')
+                }}
+                className='flex-1 bg-gray-200 dark:bg-gray-700 rounded-xl py-3 items-center'
+              >
+                <Text className='text-gray-700 dark:text-gray-300 font-semibold'>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={handleSaveRename}
+                className='flex-1 bg-indigo-500 rounded-xl py-3 items-center'
+                disabled={!editTitle.trim()}
+              >
+                <Text className='text-white font-semibold'>Save</Text>
+              </TouchableOpacity>
+            </View>
           </View>
-
-          {suggestions.length === 0 && !loadingSuggestions && (
-            <TouchableOpacity 
-              onPress={generateSuggestions}
-              className='bg-gray-100 dark:bg-gray-800 rounded-xl p-6 items-center'
-            >
-              <Text className='text-2xl mb-2'>🤖</Text>
-              <Text className='font-semibold text-gray-800 dark:text-white mb-2'>
-                Get AI Suggestions
-              </Text>
-              <Text className='text-gray-600 dark:text-gray-400 text-center'>
-                Tap to generate personalized habit recommendations based on your current routine
-              </Text>
-            </TouchableOpacity>
-          )}
-
-          <View className='space-y-4 mb-8 gap-4'>
-            {suggestions.map((suggestion) => (
-              <View key={suggestion.id} className='bg-white dark:bg-gray-800 rounded-xl p-4 border border-gray-200 dark:border-gray-700'>
-                <View className='flex-row items-start mb-3'>
-                  <View className='w-12 h-12 bg-indigo-100 dark:bg-indigo-900/30 rounded-xl items-center justify-center mr-3'>
-                    <Text className='text-xl'>{suggestion.icon}</Text>
-                  </View>
-                  <View className='flex-1'>
-                    <Text className='font-semibold text-gray-900 dark:text-white mb-1'>
-                      {suggestion.title}
-                    </Text>
-                    <View className='flex-row items-center mb-2'>
-                      <Text className='text-xs bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded-full text-gray-600 dark:text-gray-400 mr-2'>
-                        {suggestion.category}
-                      </Text>
-                      <Text className={`text-xs px-2 py-1 rounded-full ${
-                        suggestion.difficulty === 'easy' 
-                          ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'
-                          : suggestion.difficulty === 'medium'
-                          ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300'
-                          : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'
-                      }`}>
-                        {suggestion.difficulty}
-                      </Text>
-                    </View>
-                    <Text className='text-gray-700 dark:text-gray-300 text-sm mb-2'>
-                      {suggestion.description}
-                    </Text>
-                    <Text className='text-gray-500 dark:text-gray-400 text-xs mb-3'>
-                      Why this works: {suggestion.reasoning}
-                    </Text>
-                    <Text className='text-gray-500 dark:text-gray-400 text-xs'>
-                      Goal: {suggestion.targetCount} {suggestion.targetUnit} • {suggestion.estimatedTime}
-                    </Text>
-                  </View>
-                </View>
-                <TouchableOpacity 
-                  onPress={() => handleCreateHabitFromSuggestion(suggestion)}
-                  className='bg-indigo-500 rounded-lg py-3 items-center'
-                >
-                  <Text className='text-white font-medium'>Add This Habit</Text>
-                </TouchableOpacity>
-              </View>
-            ))}
-          </View>
-        </ScrollView>
-      )}
+        </View>
+      </Modal>
     </SafeAreaView>
   )
 }

@@ -14,6 +14,7 @@ export default {
       supportsTablet: true,
     },
     android: {
+      "softwareKeyboardLayoutMode": "pan",
       adaptiveIcon: {
         foregroundImage: './assets/images/lifestyle.png',
         backgroundColor: '#6e6aba',

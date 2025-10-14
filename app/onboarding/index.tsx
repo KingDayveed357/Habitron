@@ -1,6 +1,7 @@
 import { slides } from '@/constants/slide';
 // import { useAppTheme } from '@/context/ThemeContext2';
 import { useRouter } from 'expo-router';
+// import { AppStateManager } from '@/utils/AppStateManager';
 import { useRef, useState } from 'react';
 import {
   Animated,

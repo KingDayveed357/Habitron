@@ -1,6 +1,6 @@
 // app/(tabs)/mood_stat.tsx
-import { View, Text, ScrollView, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
-import React, { useState, useEffect, useCallback } from 'react';
+import { View, Text, ScrollView, TouchableOpacity, Alert, ActivityIndicator, RefreshControl } from 'react-native';
+import React, { useState, useCallback, useRef } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -44,13 +44,20 @@ export default function MoodStat({habit}:habitCorrelations) {
   const [isLoading, setIsLoading] = useState(true);
   const [isSavingMood, setIsSavingMood] = useState(false);
   const [weeklyAverage, setWeeklyAverage] = useState<number>(0);
+  const [refreshing, setRefreshing] = useState(false);
 
   const router = useRouter();
   const db = useSQLiteContext();
 
-  // Initialize services
-  const databaseService = new DatabaseService(db);
-  const moodService = new MoodService(databaseService);
+  const moodServiceRef = useRef<MoodService | null>(null);
+  const isInitialLoadRef = useRef(true);
+
+  if (!moodServiceRef.current) {
+    const databaseService = new DatabaseService(db);
+    moodServiceRef.current = new MoodService(databaseService);
+  }
+
+  const moodService = moodServiceRef.current;
 
   const moodOptions: MoodOption[] = [
     { emoji: '🤩', label: 'Amazing', value: 10 },
@@ -88,70 +95,100 @@ export default function MoodStat({habit}:habitCorrelations) {
     return lightColors.includes(bgClass)
   }
 
- const getTextColor = (currentHabit?: any) => {
-  const bgColor = currentHabit?.bgColor || currentHabit?.bg_color;
-  if (bgColor) {
-    return isLightColor(bgColor) 
-      ? 'text-gray-900' 
-      : 'text-white'
+  const getBackgroundColorClass = () => {
+    return habit?.bg_color || 'bg-white dark:bg-zinc-900'
   }
-  return 'text-gray-900 dark:text-white'
-}
 
-const getSubTextColor = (currentHabit?: any) => {
-  const bgColor = currentHabit?.bgColor || currentHabit?.bg_color;
-  if (bgColor) {
-    return isLightColor(bgColor) 
-      ? 'text-gray-600' 
-      : 'text-white/80'
+  const getTextColor = (currentHabit?: any) => {
+    const bgColor = currentHabit?.bg_color;
+    if (bgColor) {
+      return isLightColor(bgColor) 
+        ? 'text-gray-900' 
+        : 'text-white'
+    }
+    return 'text-gray-900 dark:text-white'
   }
-  return 'text-gray-600 dark:text-gray-400'
-}
 
-  const loadMoodData = async () => {
+  const getSubTextColor = (currentHabit?: any) => {
+    const bgColor = currentHabit?.bg_color;
+    if (bgColor) {
+      return isLightColor(bgColor) 
+        ? 'text-gray-600' 
+        : 'text-white/80'
+    }
+    return 'text-gray-600 dark:text-gray-400'
+  }
+
+  const loadQuickData = async () => {
     try {
-      setIsLoading(true);
-
-      // Load today's mood entry
       const todayEntry = await moodService.getTodaysMoodEntry();
       setCurrentMoodEntry(todayEntry);
       if (todayEntry) {
         setSelectedMood(todayEntry.mood_score);
       }
+    } catch (error) {
+      console.error('Error loading quick data:', error);
+    }
+  };
 
-      // Load weekly mood data
+  const loadFullData = async () => {
+    try {
       const weekly = await moodService.getWeeklyMoodData();
       setWeeklyMoods(weekly);
 
-      // Calculate weekly average
       const validEntries = weekly.filter(day => day.score > 0);
       const avg = validEntries.length > 0 
         ? validEntries.reduce((sum, day) => sum + day.score, 0) / validEntries.length
         : 0;
       setWeeklyAverage(Number(avg.toFixed(1)));
 
-      // Load habit correlations
       const correlations = await moodService.getMoodHabitCorrelations();
       setHabitCorrelations(correlations);
 
-      // Load mood insights
       const insight = await moodService.getMoodInsights();
       setMoodInsight(insight);
 
     } catch (error) {
+      console.error('Error loading full data:', error);
+      Alert.alert('Error', 'Failed to load some mood data. Pull to refresh.');
+    }
+  };
+
+  const loadMoodData = async (isRefresh = false) => {
+    try {
+      if (!isRefresh) {
+        setIsLoading(true);
+      }
+
+      await loadQuickData();
+      await loadFullData();
+
+    } catch (error) {
       console.error('Error loading mood data:', error);
-      Alert.alert('Error', 'Failed to load mood data. Please try again.');
+      Alert.alert('Error', 'Failed to load mood data. Pull to refresh.');
     } finally {
       setIsLoading(false);
+      setRefreshing(false);
     }
   };
 
   useFocusEffect(
     useCallback(() => {
-      loadMoodData();
-      return () => moodService.destroy();
+      if (isInitialLoadRef.current) {
+        loadMoodData();
+        isInitialLoadRef.current = false;
+      } else {
+        loadQuickData();
+      }
+
+      return () => {};
     }, [])
   );
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await loadMoodData(true);
+  }, []);
 
   const handleMoodSelect = async (value: number) => {
     if (isSavingMood) return;
@@ -160,22 +197,26 @@ const getSubTextColor = (currentHabit?: any) => {
       setIsSavingMood(true);
       setSelectedMood(value);
       
-      // Haptic feedback
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
-      // Save mood entry
       const savedEntry = await moodService.saveMoodEntry({
         mood_score: value
       });
 
       setCurrentMoodEntry(savedEntry);
 
-      // Show success feedback
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       
-      // Refresh weekly data to include today's entry
-      setTimeout(() => {
-        loadMoodData();
+      // OPTIMIZATION: Only reload necessary data after mood save
+      setTimeout(async () => {
+        const weekly = await moodService.getWeeklyMoodData();
+        setWeeklyMoods(weekly);
+        
+        const validEntries = weekly.filter(day => day.score > 0);
+        const avg = validEntries.length > 0 
+          ? validEntries.reduce((sum, day) => sum + day.score, 0) / validEntries.length
+          : 0;
+        setWeeklyAverage(Number(avg.toFixed(1)));
       }, 500);
 
     } catch (error) {
@@ -227,7 +268,18 @@ const getSubTextColor = (currentHabit?: any) => {
 
   return (
     <SafeAreaView className="app-background" edges={['top']}>
-      <ScrollView className="flex-1 px-4" showsVerticalScrollIndicator={false}>
+      <ScrollView 
+        className="flex-1 px-4" 
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor="#8B5CF6"
+            colors={["#8B5CF6"]}
+          />
+        }
+      >
         {/* Main Mood Selection Card */}
         <View className="mb-6 mt-2">
           <LinearGradient
@@ -244,7 +296,7 @@ const getSubTextColor = (currentHabit?: any) => {
               <Text className="text-white text-lg font-medium">{currentMood.label}</Text>
               {currentMoodEntry && (
                 <Text className="text-white/80 text-sm mt-1">
-                  Logged at {new Date(currentMoodEntry.created_at).toLocaleTimeString([], { 
+                  Logged at {new Date(currentMoodEntry.updated_at).toLocaleTimeString([], { 
                     hour: '2-digit', 
                     minute: '2-digit' 
                   })}
@@ -373,35 +425,36 @@ const getSubTextColor = (currentHabit?: any) => {
           </View>
         )}
 
-        {/* Habits & Mood Correlation */}
+        {/* Habits & Mood Correlation - FIX #3: Use actual bg_color from habit */}
         {habitCorrelations.length > 0 && (
           <View className="card p-4 mb-6">
             <Text className="text-lg text-subheading mb-4">
               Habits & Mood Correlation
             </Text>
             <View className="space-y-3 flex flex-col gap-3">
-              {habitCorrelations.slice(0, 3).map((habit, index) => (
+              {habitCorrelations.slice(0, 3).map((correlation, index) => (
                 <View 
                   key={index} 
-                  className="flex-row items-center justify-between p-4 rounded-2xl"
-                  style={{ backgroundColor: habit.bgColor }}
+                  className={`flex-row items-center justify-between p-4 rounded-2xl ${correlation.bg_color || 'bg-gray-100 dark:bg-gray-800'}`}
                 >
                   <View className="flex-row items-center flex-1">
-                    <Text className="text-2xl mr-3">{habit.habit_icon}</Text>
+                    <Text className="text-2xl mr-3">{correlation.habit_icon}</Text>
                     <View className="flex-1">
-                      <Text className={`font-medium ${getTextColor(habit)}}`}>
-                        {habit.habit_name}
+                      <Text className={`font-medium ${getTextColor({ bg_color: correlation.bg_color })}`}>
+                        {correlation.habit_name}
                       </Text>
-                      <Text className={`text-xs ${getSubTextColor(habit)} mt-1`}>
-                        {habit.correlation_strength > 0.5 ? 'Strong' : habit.correlation_strength > 0 ? 'Moderate' : 'Weak'} correlation
+                      <Text className={`text-xs mt-1 ${getSubTextColor({ bg_color: correlation.bg_color })}`}>
+                        {correlation.correlation_strength > 0.5 ? 'Strong' : correlation.correlation_strength > 0 ? 'Moderate' : 'Weak'} correlation
                       </Text>
                     </View>
                   </View>
                   <Text 
                     className="font-semibold text-sm" 
-                    style={{ color: habit.color }}
+                    style={{ 
+                      color: isLightColor(correlation.bg_color) ? correlation.color : '#ffffff'
+                    }}
                   >
-                    {habit.boost_description}
+                    {correlation.boost_description}
                   </Text>
                 </View>
               ))}

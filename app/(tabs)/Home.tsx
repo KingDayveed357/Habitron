@@ -168,7 +168,7 @@ const Home = () => {
 
             {/* Add Habit Button */}
             <TouchableOpacity
-              onPress={() => router.push('/screens/create_habit')}
+              onPress={() => router.push('/components/modal/CreateHabit')}
               className="bg-indigo-500 p-3 rounded-xl items-center justify-center"
               activeOpacity={0.8}
             >
@@ -208,7 +208,7 @@ const Home = () => {
           {/* Progress Bar */}
           <View className="bg-gray-200 dark:bg-gray-700 rounded-full h-3 mb-4">
             <View 
-              className="bg-indigo-500 rounded-full h-3 transition-all duration-300" 
+              className="bg-indigo-500 rounded-full h-3 " 
               style={{ width: `${overallProgress * 100}%` }}
             />
           </View>
@@ -271,7 +271,7 @@ const Home = () => {
               
               {/* Quick Add Button at bottom of habits list */}
               <TouchableOpacity
-                onPress={() => router.push('/screens/create_habit')}
+                onPress={() => router.push('/components/modal/CreateHabit')}
                 className="mt-4 p-4 border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-xl items-center justify-center"
                 activeOpacity={0.7}
               >
