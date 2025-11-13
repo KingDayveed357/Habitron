@@ -84,7 +84,7 @@ const MetricsOverview: React.FC<MetricsOverviewProps> = ({
       </View>
 
       {/* Goals Progress */}
-      {(overallMetrics.weeklyGoal || overallMetrics.monthlyGoal) && (
+      {/* {(overallMetrics.weeklyGoal || overallMetrics.monthlyGoal) && (
         <View className="card p-4 mb-4">
           <Text className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">
             Goals Progress
@@ -140,7 +140,7 @@ const MetricsOverview: React.FC<MetricsOverviewProps> = ({
             )}
           </View>
         </View>
-      )}
+      )} */}
     </View>
   );
 };

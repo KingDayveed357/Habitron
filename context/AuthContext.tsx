@@ -11,7 +11,7 @@ interface AuthContextType {
   signInWithGoogle: () => Promise<{ success: boolean; error?: string }>;
   signInWithApple: () => Promise<{ success: boolean; error?: string }>;
   signInWithFacebook: () => Promise<{ success: boolean; error?: string }>;
-  signOut: () => Promise<void>;
+  signOut: () => Promise<{ success: boolean; error?: string }>;
   updateProfile: (name: string, email: string) => Promise<{ success: boolean; error?: string }>;
   changePassword: (currentPassword: string, newPassword: string) => Promise<{ success: boolean; error?: string }>;
   sendPasswordResetOTP: (email: string) => Promise<{ success: boolean; error?: string; message?: string }>;
@@ -139,12 +139,28 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   };
 
   const signOut = async () => {
-    setLoading(true);
     try {
-      await AuthService.signOut();
+      // Set loading BEFORE clearing user to prevent null reference errors
+      setLoading(true);
+      
+      // Clear user state immediately to trigger loading states in components
       setUser(null);
+      
+      // Sign out from auth service
+      await AuthService.signOut();
+      
+      // Small delay to ensure state propagation
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+      return { success: true };
     } catch (error) {
       console.error('Sign out error:', error);
+      // Even if service fails, we still clear local state
+      setUser(null);
+      return { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Failed to sign out' 
+      };
     } finally {
       setLoading(false);
     }

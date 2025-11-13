@@ -10,9 +10,11 @@ import {
   Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import BackButton from '../components/ui/BackButton';
+// import BackButton from '../components/ui/BackButton';
 import { useRouter } from 'expo-router';
 import { AuthService } from '@/services/auth';
+import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
+
 
 const ForgotPassword: React.FC = () => {
   const [email, setEmail] = useState('');
@@ -91,12 +93,18 @@ const ForgotPassword: React.FC = () => {
 
   return (
     <SafeAreaView className="flex-1 app-background relative">
-      <BackButton onPress={() => router.back()} />
+     <TouchableOpacity
+          onPress={() => router.back()}
+          className=" left-4 z-10 p-2 rounded-full"
+        >
+          <FontAwesome6 name="arrow-left" size={20} color="#333" />
+        </TouchableOpacity>
+
 
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={80}
-        className="flex-1 pt-24 px-6"
+        className="flex-1 pt-8 px-6"
       >
         {/* Header */}
         <View className="mb-8">

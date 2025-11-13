@@ -293,6 +293,8 @@ export class DatabaseService {
     `);
   }
 
+  
+
   public async getLastSyncTime(): Promise<string | null> {
     const result = await this.db.getFirstAsync<{ last_sync: string }>(
       `SELECT MAX(last_synced_at) as last_sync FROM (
@@ -305,3 +307,4 @@ export class DatabaseService {
     return result?.last_sync || null;
   }
 }
+

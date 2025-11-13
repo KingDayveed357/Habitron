@@ -1,17 +1,16 @@
 // ==========================================
-// components/habit-details/HabitHeroCard.tsx
+// components/habit-details/HeroCard.tsx
 // ==========================================
 import React, { memo } from 'react';
 import { View, Text } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { HabitWithCompletion } from '@/types/habit';
 import { getColorFromBgClass, getFrequencyDisplay } from '@/utils/habitHelpers';
+import { HabitStatistics } from '@/hooks/useHabitStatistics';
 
 interface HabitHeroCardProps {
   habit: HabitWithCompletion;
-  statistics: {
-    completionRate: number;
-  };
+  statistics: HabitStatistics;
 }
 
 export const HabitHeroCard = memo<HabitHeroCardProps>(({ habit, statistics }) => {
@@ -40,7 +39,7 @@ export const HabitHeroCard = memo<HabitHeroCardProps>(({ habit, statistics }) =>
         
         <View className="flex-row justify-between">
           <View className="bg-white/20 rounded-xl p-4 flex-1 mr-3">
-            <Text className="text-3xl font-bold text-white">{habit.streak}</Text>
+            <Text className="text-3xl font-bold text-white"> {statistics.currentStreak}</Text>
             <Text className="text-white/80 text-sm">Current Streak</Text>
           </View>
           <View className="bg-white/20 rounded-xl p-4 flex-1 ml-3">

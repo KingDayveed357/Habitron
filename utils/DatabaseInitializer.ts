@@ -1,3 +1,5 @@
+// utils/DatabaseInitializer.ts
+
 import { SQLiteDatabase } from 'expo-sqlite';
 
 

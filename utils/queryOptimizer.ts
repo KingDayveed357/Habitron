@@ -1,5 +1,6 @@
 // utils/queryOptimizer.ts
 import { SQLiteDatabase } from 'expo-sqlite';
+import { useCallback, useRef } from 'react';
 
 export class QueryOptimizer {
   private db: SQLiteDatabase;
@@ -154,7 +155,7 @@ export class DatabasePool {
 }
 
 // React hook for optimized database queries
-import { useCallback, useRef } from 'react';
+
 import { useSQLiteContext } from 'expo-sqlite';
 
 export function useOptimizedQueries() {

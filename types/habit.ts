@@ -50,6 +50,7 @@ export interface HabitWithCompletion extends Habit {
   progress: number;
   completed: number;
   total: number;
+  longestStreak?: number;
 }
 
 export interface CreateHabitRequest {

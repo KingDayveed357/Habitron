@@ -1,9 +1,23 @@
-// components/AIInsights.tsx
-import React, { useEffect, useState } from 'react'
+// components/AIInsights.tsx - OFFLINE-FIRST VERSION
+/**
+ * 🎯 AI INSIGHTS COMPONENT - Entry Point
+ * 
+ * Features:
+ * - Auto-loads insights from local SQLite data
+ * - Shows personalized insights based on user profile
+ * - Entry point to AI Coach screen
+ * - Gracefully handles offline/error states
+ * 
+ * @version 4.0.0
+ */
+
+import React, { useEffect, useMemo } from 'react'
 import { View, Text, TouchableOpacity, ActivityIndicator } from 'react-native'
 import { Ionicons } from '@expo/vector-icons'
-import { useInsights } from '@/hooks/useInsights'
 import { useRouter } from 'expo-router'
+import { useInsights, buildInsightsContext } from '@/hooks/useInsights'
+import { useHabits } from '@/hooks/usehabits'
+import { useAuth } from '@/hooks/useAuth'
 import { AIInsight } from '@/services/AIServices/insights'
 
 interface AIInsightsProps {
@@ -11,11 +25,6 @@ interface AIInsightsProps {
   showHeader?: boolean
   compact?: boolean
   onInsightPress?: (insight: AIInsight) => void
-  context: {
-    habits?: any[]
-    stats?: any
-    userProfile?: any
-  }
   autoLoad?: boolean
 }
 
@@ -24,28 +33,79 @@ const AIInsights: React.FC<AIInsightsProps> = ({
   showHeader = true,
   compact = false,
   onInsightPress,
-  context,
   autoLoad = true
 }) => {
   const router = useRouter()
+  const { user } = useAuth()
+  const { habits, stats, getAllCompletions } = useHabits()
+
+  /**
+   * 🆕 Build context from local SQLite data
+   */
+  const insightsContext = useMemo(async () => {
+    if (!user || !habits) {
+      return {
+        habits: [],
+        stats: {
+          totalHabits: 0,
+          completedToday: 0,
+          completionRate: 0,
+          activeStreak: 0
+        },
+        timeframe: 'week' as const
+      }
+    }
+
+    // Get completions from SQLite
+    const completions = await getAllCompletions(user.id, 30)
+
+    // Transform habits to context format
+    const habitsContext = habits.map(habit => ({
+      id: habit.id,
+      title: habit.title,
+      icon: habit.icon,
+      category: 'General', // You can add category to your habit type
+      target_count: habit.target_count,
+      target_unit: habit.target_unit,
+      frequency_type: habit.frequency_type,
+      currentStreak: habit.streak,
+      completionRate: habit.progress * 100,
+      is_active: true
+    }))
+
+    return {
+      habits: habitsContext,
+      stats: stats || {
+        totalHabits: 0,
+        completedToday: 0,
+        completionRate: 0,
+        activeStreak: 0
+      },
+      habitHistory: completions,
+      timeframe: 'week' as const
+    }
+  }, [habits, stats, user, getAllCompletions])
+
   const { 
     insights, 
     loadingInsights, 
     refreshInsights, 
-    error 
+    error,
+    clearError
   } = useInsights({
     autoLoad,
-    context
+    context: insightsContext
   })
 
-  const [hasAttemptedLoad, setHasAttemptedLoad] = useState(false)
-
+  /**
+   * Auto-clear errors after 5 seconds
+   */
   useEffect(() => {
-    if (!hasAttemptedLoad && !loadingInsights && insights.length === 0 && autoLoad) {
-      refreshInsights()
-      setHasAttemptedLoad(true)
+    if (error) {
+      const timer = setTimeout(clearError, 5000)
+      return () => clearTimeout(timer)
     }
-  }, [hasAttemptedLoad, loadingInsights, insights.length, refreshInsights, autoLoad])
+  }, [error, clearError])
 
   const getInsightIcon = (insight: AIInsight) => {
     return insight.icon || '✨'
@@ -79,7 +139,7 @@ const AIInsights: React.FC<AIInsightsProps> = ({
           break
         case 'navigate':
           if (insight.action.data?.route) {
-            router.push(insight.action.data.route)
+            router.push(insight.action.data.route as any)
           }
           break
         case 'modify_habit':
@@ -96,6 +156,7 @@ const AIInsights: React.FC<AIInsightsProps> = ({
     }
   }
 
+  // Error state
   if (error && insights.length === 0) {
     return (
       <View className={`rounded-2xl p-4 border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 ${compact ? 'mb-4' : 'mb-6'}`}>
@@ -115,6 +176,7 @@ const AIInsights: React.FC<AIInsightsProps> = ({
     )
   }
 
+  // Loading state
   if (loadingInsights && insights.length === 0) {
     return (
       <View className={`rounded-2xl p-4 border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 ${compact ? 'mb-4' : 'mb-6'}`}>
@@ -128,6 +190,7 @@ const AIInsights: React.FC<AIInsightsProps> = ({
     )
   }
 
+  // Empty state
   if (insights.length === 0) {
     return (
       <View className={`rounded-2xl p-4 border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 ${compact ? 'mb-4' : 'mb-6'}`}>

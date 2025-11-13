@@ -1,5 +1,6 @@
 // /app/auth/signup.tsx
 import {
+  StyleSheet,
   View,
   Text,
   TextInput,
@@ -19,6 +20,7 @@ import Fontisto from '@expo/vector-icons/Fontisto';
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
 import { icons } from '@/constants/icons';
 import { AuthService } from '@/services/auth';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface SignUpProps {
   onLoginSuccess?: (email: string) => void;   
@@ -26,6 +28,7 @@ interface SignUpProps {
 
 export default function SignUp({onLoginSuccess}: SignUpProps ) {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
 
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
@@ -196,22 +199,23 @@ export default function SignUp({onLoginSuccess}: SignUpProps ) {
   };
 
   return (
-    <SafeAreaView className="flex-1 app-background relative">
+    <SafeAreaView style={[styles.container, { paddingTop: insets.top }]} className="flex-1 app-background relative">
       <KeyboardAvoidingView 
         behavior={Platform.OS === 'ios' ? 'padding' : undefined} 
         keyboardVerticalOffset={80}
         className="flex-1"
       >
         {/* Back Button */}
-        <TouchableOpacity
+      <TouchableOpacity
           onPress={() => router.back()}
-          className="top-5 left-4 z-10 p-2 rounded-full"
+          className=" left-4 z-10 p-2 rounded-full"
         >
           <FontAwesome6 name="arrow-left" size={20} color="#333" />
         </TouchableOpacity>
 
+
         <ScrollView 
-          className="flex-grow px-6 pt-10 pb-24"
+          className="flex-grow px-6 pt-4 pb-24"
           contentContainerStyle={{ paddingBottom: 100 }}
         >
           <Text className="text-heading text-3xl mb-2">Join Habitron Today ✨</Text>
@@ -390,3 +394,10 @@ export default function SignUp({onLoginSuccess}: SignUpProps ) {
     </SafeAreaView>
   );
 }
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    position: 'relative',
+  },
+
+})

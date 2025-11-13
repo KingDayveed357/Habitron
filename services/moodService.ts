@@ -209,7 +209,6 @@ export class MoodService {
     return Date.now() - cacheEntry.timestamp < this.CACHE_TTL;
   }
 
-  // FIX #1: Update entry_time and created_at when updating existing entry
   public async saveMoodEntry(moodData: {
     mood_score: number;
     notes?: string;

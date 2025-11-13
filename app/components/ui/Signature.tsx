@@ -1,3 +1,4 @@
+// app/components/ui/Signature.tsx
 import React, { useRef, useState } from 'react';
 import { View, Text, PanResponder, Dimensions } from 'react-native';
 import Svg, { Path } from 'react-native-svg';

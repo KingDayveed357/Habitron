@@ -5,6 +5,8 @@ import React from 'react'
 import { useRouter } from 'expo-router'
 import { Ionicons } from '@expo/vector-icons'
 import { SkeletonHabitCard } from './SkeletonHabitCard'
+import { formatCompletionCount, getStreakUnit } from '@/utils/streakCalculation'
+import { useHabitStatistics } from '@/hooks/useHabitStatistics'
 
 interface Habit {
   id: string
@@ -19,6 +21,8 @@ interface Habit {
   category?: string
   name?: string
   conflict?: boolean
+  target_unit: string // ADDED
+  frequency_type: string // ADDED
 }
 
 interface HabitCardProps {
@@ -121,10 +125,17 @@ const HabitCard: React.FC<HabitCardProps> = ({ habit, onToggle, isLast = false, 
   
   const habitName = habit.name || habit.title || 'Untitled Habit'
   const completedCount = habit.completed || 0
-  const totalCount = habit.total || 1
+  const targetCount = habit.total || 1
   const streakCount = habit.streak || 0
   const categoryName = habit.category || ''
   const progressValue = habit.progress || 0
+
+
+  const targetText = formatCompletionCount(targetCount, habit.target_unit)
+  
+  // FIX 2: Get correct streak unit
+  const streakUnit = getStreakUnit(habit.frequency_type)
+  
 
   return (
     <View className={`${!isLast ? 'mb-4' : ''}`}>
@@ -162,7 +173,7 @@ const HabitCard: React.FC<HabitCardProps> = ({ habit, onToggle, isLast = false, 
                   </Text>
                 )}
                 <Text className={`text-sm ${getSubTextColor()}`}>
-                  {`${completedCount}/${totalCount} completed • ${streakCount} day streak`}
+                {completedCount} / {targetText} • {streakCount} {streakUnit} streak
                 </Text>
               </View>
             </View>

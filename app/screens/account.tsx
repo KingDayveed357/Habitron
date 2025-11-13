@@ -123,12 +123,16 @@ const AccountScreen: React.FC = () => {
     setShowConfirmPassword(!showConfirmPassword);
   }, [showConfirmPassword]);
 
-  useEffect(() => {
-    if (user) {
-      setEditName(user.name || '');
-      setEditEmail(user.email || '');
-    }
-  }, [user]);
+useEffect(() => {
+  if (user) {
+    setEditName(user.name || '');
+    setEditEmail(user.email || '');
+  } else {
+  
+    setEditName('');
+    setEditEmail('');
+  }
+}, [user]);
 
   const getThemeLabel = () => {
     if (theme === 'system') {
@@ -143,23 +147,36 @@ const AccountScreen: React.FC = () => {
     return '🔄'; // system
   };
 
-  const handleLogout = () => {
-    Alert.alert(
-      'Logout',
-      'Are you sure you want to logout?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { 
-          text: 'Logout', 
-          style: 'destructive', 
-          onPress: async () => {
-            await signOut();
-            router.replace('/');
+const handleLogout = () => {
+  Alert.alert(
+    'Logout',
+    'Are you sure you want to logout?',
+    [
+      { text: 'Cancel', style: 'cancel' },
+      { 
+        text: 'Logout', 
+        style: 'destructive', 
+        onPress: async () => {
+          try {
+            const result = await signOut();
+            
+            if (result.success) {
+              // Wait for state to update before navigating
+              setTimeout(() => {
+                router.replace('/auth/signin');
+              }, 150);
+            } else {
+              Alert.alert('Error', result.error || 'Failed to logout');
+            }
+          } catch (error) {
+            console.error('Logout error:', error);
+            Alert.alert('Error', 'An unexpected error occurred during logout');
           }
-        },
-      ]
-    );
-  };
+        }
+      },
+    ]
+  );
+};
 
   const handleDeleteAccount = () => {
     Alert.alert(
@@ -294,25 +311,30 @@ const AccountScreen: React.FC = () => {
 
 
 
-  if (loading) {
-    return (
-      <SafeAreaView className="flex-1 bg-gray-50 dark:bg-black justify-center items-center">
-        <ActivityIndicator size="large" color="#3B82F6" />
-        <Text className="mt-2 text-gray-600 dark:text-gray-400">Loading...</Text>
-      </SafeAreaView>
-    );
-  }
+ if (loading) {
+  return (
+    <SafeAreaView className="flex-1 bg-gray-50 dark:bg-black justify-center items-center">
+      <ActivityIndicator size="large" color="#3B82F6" />
+      <Text className="mt-2 text-gray-600 dark:text-gray-400">Loading...</Text>
+    </SafeAreaView>
+  );
+}
 
-  // if (!user) {
+// If user is null, show loading while redirecting (ProtectedRoute will handle redirect)
+if (!user) {
+  return (
+    <SafeAreaView className="flex-1 bg-gray-50 dark:bg-black justify-center items-center">
+      <ActivityIndicator size="large" color="#3B82F6" />
+      <Text className="text-gray-600 dark:text-gray-400 mt-2">Redirecting...</Text>
+    </SafeAreaView>
+  );
+}
+
+  //  if (!user) {
   //   return (
   //     <SafeAreaView className="flex-1 bg-gray-50 dark:bg-black justify-center items-center">
-  //       <Text className="text-xl font-bold text-gray-800 dark:text-white mb-4">Not Authenticated</Text>
-  //       <TouchableOpacity
-  //         onPress={() => router.replace('/')}
-  //         className="bg-blue-500 px-6 py-3 rounded-lg"
-  //       >
-  //         <Text className="text-white font-semibold">Go to Login</Text>
-  //       </TouchableOpacity>
+  //       <ActivityIndicator size="large" color="#3B82F6" />
+  //       <Text className="text-gray-600 dark:text-gray-400 mt-2">Loading profile...</Text>
   //     </SafeAreaView>
   //   );
   // }

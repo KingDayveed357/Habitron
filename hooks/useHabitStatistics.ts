@@ -1,72 +1,225 @@
-// ==========================================
-// hooks/useHabitStatistics.ts
-// ==========================================
-import { useMemo } from 'react';
-import { HabitWithCompletion } from '../types/habit';
-import { CalendarDay } from '../types/calendar';
+// hooks/useHabitStatistics.ts - FIXED VERSION
+
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { HabitWithCompletion, HabitCompletion } from '@/types/habit';
+import { CalendarDay } from '@/types/calendar';
+import { useHabitService } from './useHabitService';
+import { useAuth } from './useAuth';
+import {
+  calculateStreak,
+  calculateSuccessMetrics,
+  calculatePeriodStats,
+  StreakInfo,
+  SuccessMetrics,
+  PeriodStats
+} from '@/utils/habitTrackingAlgorithm';
 
 export interface HabitStatistics {
-  totalDays: number;
-  completedDays: number;
   completionRate: number;
+  consistencyScore: number;
   currentStreak: number;
   longestStreak: number;
-  weeklyAverage: number;
-  monthlyAverage: number;
-  trendDirection: 'up' | 'down' | 'stable';
+  streakUnit: string;
+  weekStats: PeriodStats;
+  monthStats: PeriodStats;
+  allTimeStats: PeriodStats;
+  totalScheduledDays: number;
+  completedDays: number;
+  missedDays: number;
+  partialDays: number;
+  perfectWeeks: number;
+  bestStreak: number;
+  totalCompletions: number;
+  last7DaysRate: number;
+  last30DaysRate: number;
+  improvementTrend: 'improving' | 'stable' | 'declining';
 }
+
+const EMPTY_STATS: HabitStatistics = {
+  completionRate: 0,
+  consistencyScore: 0,
+  currentStreak: 0,
+  longestStreak: 0,
+  streakUnit: 'days',
+  weekStats: {
+    period: 'week',
+    completionRate: 0,
+    averageCompletion: 0,
+    totalCompletions: 0,
+    scheduledDays: 0,
+    perfectDays: 0
+  },
+  monthStats: {
+    period: 'month',
+    completionRate: 0,
+    averageCompletion: 0,
+    totalCompletions: 0,
+    scheduledDays: 0,
+    perfectDays: 0
+  },
+  allTimeStats: {
+    period: 'all',
+    completionRate: 0,
+    averageCompletion: 0,
+    totalCompletions: 0,
+    scheduledDays: 0,
+    perfectDays: 0
+  },
+  totalScheduledDays: 0,
+  completedDays: 0,
+  missedDays: 0,
+  partialDays: 0,
+  perfectWeeks: 0,
+  bestStreak: 0,
+  totalCompletions: 0,
+  last7DaysRate: 0,
+  last30DaysRate: 0,
+  improvementTrend: 'stable'
+};
 
 export const useHabitStatistics = (
   habit: HabitWithCompletion | null,
   calendarData: CalendarDay[]
 ): HabitStatistics => {
-  return useMemo(() => {
-    if (!habit) {
-      return {
-        totalDays: 0,
-        completedDays: 0,
-        completionRate: 0,
-        currentStreak: 0,
-        longestStreak: 0,
-        weeklyAverage: 0,
-        monthlyAverage: 0,
-        trendDirection: 'stable' as const
-      };
-    }
+  const habitService = useHabitService();
+  const { user } = useAuth();
+  const [completions, setCompletions] = useState<HabitCompletion[]>([]);
+  const [loading, setLoading] = useState(false);
+  const isMountedRef = useRef(true);
+  const loadingRef = useRef(false);
 
-    // Calculate statistics from calendar data
-    const currentMonthDays = calendarData.filter(day => day.isCurrentMonth);
-    const completedDays = currentMonthDays.filter(day => day.isCompleted).length;
-    const totalDays = currentMonthDays.length;
-    const completionRate = totalDays > 0 ? (completedDays / totalDays) * 100 : 0;
-
-    // Get streak information from habit
-    const currentStreak = habit.streak || 0;
-    
-    // TODO: Replace with actual longest streak from backend
-    const longestStreak = Math.max(habit.streak || 0, Math.floor(Math.random() * 20) + 5);
-    
-    // Calculate averages
-    const weeklyAverage = Math.floor(completionRate * 0.07);
-    const monthlyAverage = completedDays;
-
-    // Determine trend direction based on completion rate
-    let trendDirection: 'up' | 'down' | 'stable' = 'stable';
-    if (completionRate > 70) {
-      trendDirection = 'up';
-    } else if (completionRate < 30) {
-      trendDirection = 'down';
-    }
-
-    return {
-      totalDays,
-      completedDays,
-      completionRate,
-      currentStreak,
-      longestStreak,
-      weeklyAverage,
-      monthlyAverage,
-      trendDirection
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
     };
-  }, [habit, calendarData]);
+  }, []);
+
+  // Load completions
+  useEffect(() => {
+    const loadCompletions = async () => {
+      if (!habit || !user || loadingRef.current) {
+        return;
+      }
+
+      loadingRef.current = true;
+      setLoading(true);
+
+      try {
+        // Load up to 1 year of data
+        const allCompletions = await habitService.getHabitCompletions(
+          habit.id, 
+          user.id, 
+          365
+        );
+
+        if (isMountedRef.current) {
+          setCompletions(allCompletions);
+        }
+      } catch (error) {
+        console.error('Error loading completions for statistics:', error);
+        if (isMountedRef.current) {
+          setCompletions([]);
+        }
+      } finally {
+        loadingRef.current = false;
+        if (isMountedRef.current) {
+          setLoading(false);
+        }
+      }
+    };
+
+    loadCompletions();
+  }, [habit?.id, user?.id, habitService]);
+
+  // Calculate statistics
+  const statistics = useMemo((): HabitStatistics => {
+    if (!habit || completions.length === 0) {
+      return EMPTY_STATS;
+    }
+
+    try {
+      // Use the simple streak from habit object
+      const currentStreak = habit.streak || 0;
+      const longestStreak = habit.longestStreak || currentStreak;
+
+      // Calculate metrics for different periods
+      const last30DaysMetrics = calculateSuccessMetrics(habit, completions, 30);
+      const last7DaysMetrics = calculateSuccessMetrics(habit, completions, 7);
+
+      // Calculate period stats
+      const weekStats = calculatePeriodStats(habit, completions, 'week');
+      const monthStats = calculatePeriodStats(habit, completions, 'month');
+      const allTimeStats = calculatePeriodStats(habit, completions, 'all');
+
+      // Total completions count
+      const totalCompletions = completions.reduce(
+        (sum, c) => sum + c.completed_count, 
+        0
+      );
+
+      // Determine improvement trend
+      const improvementTrend = determineImprovementTrend(
+        last7DaysMetrics.successRate,
+        last30DaysMetrics.successRate
+      );
+
+      // Get streak unit
+      const streakUnit = getStreakUnit(habit.frequency_type);
+
+      return {
+        completionRate: Math.round(last30DaysMetrics.successRate),
+        consistencyScore: Math.round(last30DaysMetrics.consistencyScore),
+        currentStreak,
+        longestStreak,
+        streakUnit,
+        weekStats,
+        monthStats,
+        allTimeStats,
+        totalScheduledDays: last30DaysMetrics.totalScheduledDays,
+        completedDays: last30DaysMetrics.completedDays,
+        missedDays: last30DaysMetrics.missedDays,
+        partialDays: last30DaysMetrics.partiallyCompletedDays,
+        perfectWeeks: 0, // Calculate if needed
+        bestStreak: longestStreak,
+        totalCompletions,
+        last7DaysRate: Math.round(last7DaysMetrics.successRate),
+        last30DaysRate: Math.round(last30DaysMetrics.successRate),
+        improvementTrend
+      };
+    } catch (error) {
+      console.error('Error calculating statistics:', error);
+      return EMPTY_STATS;
+    }
+  }, [habit, completions]);
+
+  return statistics;
 };
+
+function determineImprovementTrend(
+  last7DaysRate: number,
+  last30DaysRate: number
+): 'improving' | 'stable' | 'declining' {
+  const difference = last7DaysRate - last30DaysRate;
+
+  if (difference > 10) {
+    return 'improving';
+  } else if (difference < -10) {
+    return 'declining';
+  } else {
+    return 'stable';
+  }
+}
+
+function getStreakUnit(frequencyType: string): string {
+  switch (frequencyType) {
+    case 'daily':
+      return 'days';
+    case 'weekly':
+      return 'weeks';
+    case 'monthly':
+      return 'months';
+    default:
+      return 'days';
+  }
+}

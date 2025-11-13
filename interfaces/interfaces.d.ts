@@ -1,3 +1,4 @@
+// interfaces/interfaces.d.ts
 export interface ThemeContextType {
   theme: ThemeMode;
   setTheme: (theme: ThemeMode) => void;
@@ -45,6 +46,8 @@ export interface OnboardingStep {
   subtitle: string;
   type: 'single' | 'multiple' | 'time' | 'input' | 'contract';
   options?: OptionItem[];
+  maxSelections?: number;
+  context?: string
 }
 
 
@@ -152,6 +155,24 @@ export interface Thread {
   replies: number;
   timestamp: string;
   category: string;
+}
+
+export interface HabitLog {
+  id: string
+  habitId: string
+  completedAt: string
+  count: number
+  note?: string
+}
+
+export interface UserStats {
+  totalHabits: number
+  activeHabits: number
+  completedToday: number
+  completionRate: number
+  activeStreak: number
+  longestStreak: number
+  totalCompletions: number
 }
 
 

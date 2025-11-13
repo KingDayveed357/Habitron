@@ -1,4 +1,4 @@
-// app/screens/create_habit.tsx (Refactored)
+// app/components/modal/CreateHabit.tsx
 import { useState } from 'react';
 import { Stack } from 'expo-router';
 import { View, Text, TouchableOpacity, Alert } from 'react-native';

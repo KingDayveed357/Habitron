@@ -1,4 +1,5 @@
-// hooks/useHabits.ts
+// hooks/useHabits.ts - 
+
 import { useAuth } from '@/hooks/useAuth';
 import { useHabitService } from '@/hooks/useHabitService';
 import {
@@ -9,6 +10,8 @@ import {
   UpdateHabitRequest
 } from '@/types/habit';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { calculateHabitStreak } from '@/utils/streakCalculation';
+import { LocalCompletionRecord } from '@/types/habit';
 
 interface UseHabitsReturn {
   habits: HabitWithCompletion[];
@@ -19,10 +22,10 @@ interface UseHabitsReturn {
   isOnline: boolean;
   syncStatus: 'synced' | 'pending' | 'syncing' | 'error';
   lastSyncResult: SyncResult | null;
-  // Actions
   refetch: () => Promise<void>;
   refresh: () => Promise<void>;
   toggleHabit: (habitId: string) => Promise<void>;
+  getAllCompletions: (userId: string, days?: number) => Promise<LocalCompletionRecord[]>;
   updateHabitCompletion: (habitId: string, count: number) => Promise<void>;
   createHabit: (habitData: CreateHabitRequest) => Promise<void>;
   updateHabit: (habitId: string, updates: UpdateHabitRequest) => Promise<void>;
@@ -50,7 +53,6 @@ export const useHabits = (): UseHabitsReturn => {
   const [syncStatus, setSyncStatus] = useState<'synced' | 'pending' | 'syncing' | 'error'>('synced');
   const [lastSyncResult, setLastSyncResult] = useState<SyncResult | null>(null);
   
-  // Keep track of ongoing operations to prevent race conditions
   const isToggling = useRef(false);
   const isCreating = useRef(false);
   const isSyncing = useRef(false);
@@ -65,24 +67,19 @@ export const useHabits = (): UseHabitsReturn => {
       const nowOnline = networkStatus.isConnected && networkStatus.isInternetReachable;
       setIsOnline(nowOnline);
 
-      // Auto-sync when coming back online
       if (wasOffline && nowOnline && !isSyncing.current && user) {
         syncData();
       }
 
-      // Check for pending sync items
       checkSyncStatus();
     };
 
     checkNetwork();
     const interval = setInterval(checkNetwork, 5000);
 
-    return () => {
-      clearInterval(interval);
-    };
+    return () => clearInterval(interval);
   }, [isOnline, user]);
 
-  // Check if there are items pending sync
   const checkSyncStatus = useCallback(async () => {
     if (!user) return;
 
@@ -90,24 +87,21 @@ export const useHabits = (): UseHabitsReturn => {
       const networkStatus = habitService.getNetworkStatus();
       const online = networkStatus.isConnected && networkStatus.isInternetReachable;
       
-      if (online) {
-        setSyncStatus('synced');
-      } else {
-        setSyncStatus('pending');
-      }
+      setSyncStatus(online ? 'synced' : 'pending');
     } catch (error) {
       console.warn('Failed to check sync status:', error);
     }
   }, [user, habitService]);
 
-  // Load data with proper queue management
+  // ============================================================================
+  // LOAD DATA
+  // ============================================================================
   const loadData = useCallback(async (isRefresh = false, silent = false) => {
     if (!user) {
       setLoading(false);
       return;
     }
 
-    // If already loading, return the existing promise to prevent race conditions
     if (isLoadingData.current && loadDataQueue.current) {
       return loadDataQueue.current;
     }
@@ -126,7 +120,6 @@ export const useHabits = (): UseHabitsReturn => {
         
         setError(null);
         
-        // Load from habit service
         const [habitsData, statsData] = await Promise.all([
           habitService.getHabits(),
           habitService.getHabitStats()
@@ -135,10 +128,8 @@ export const useHabits = (): UseHabitsReturn => {
         setHabits(habitsData);
         setStats(statsData);
 
-        // Check sync status
         await checkSyncStatus();
 
-        // Try to sync with server if online (but don't block UI)
         if (isOnline && !isSyncing.current) {
           syncData().catch(err => console.warn('Background sync failed:', err));
         }
@@ -160,7 +151,6 @@ export const useHabits = (): UseHabitsReturn => {
     return loadPromise;
   }, [user, checkSyncStatus, isOnline, habitService]);
 
-  // Initial load and user change effect
   useEffect(() => {
     if (user) {
       loadData();
@@ -171,7 +161,123 @@ export const useHabits = (): UseHabitsReturn => {
     }
   }, [user]);
 
-  // Sync with server
+  // ============================================================================
+  // TOGGLE HABIT - WITH OPTIMISTIC UPDATE
+  // ============================================================================
+  const toggleHabit = useCallback(async (habitId: string) => {
+    if (!user || isToggling.current) return;
+
+    isToggling.current = true;
+
+    // Store previous state for rollback
+    const previousHabits = [...habits];
+    const previousStats = { ...stats };
+
+    try {
+      // Find the habit
+      const habit = habits.find(h => h.id === habitId);
+      if (!habit) throw new Error('Habit not found');
+
+      const currentCount = habit.completed || 0;
+      const newCount = currentCount >= habit.target_count ? 0 : habit.target_count;
+      const willBeCompleted = newCount >= habit.target_count;
+
+      // STEP 1: Optimistic update - immediate UI feedback
+      setHabits(prevHabits => {
+        return prevHabits.map(h => {
+          if (h.id !== habitId) return h;
+
+          const newProgress = newCount / h.target_count;
+          
+          // Optimistically update streak if completing
+          let newStreak = h.streak;
+          if (willBeCompleted && currentCount < h.target_count) {
+            newStreak = Math.max(h.streak, 1);
+          }
+
+          return {
+            ...h,
+            completed: newCount,
+            progress: Math.min(newProgress, 1),
+            isCompleted: willBeCompleted,
+            streak: newStreak
+          };
+        });
+      });
+
+      // STEP 2: Update stats immediately
+      setStats(prevStats => {
+        const wasCompleted = habit.isCompleted;
+        const deltaCompleted = wasCompleted 
+          ? (willBeCompleted ? 0 : -1)
+          : (willBeCompleted ? 1 : 0);
+
+        return {
+          ...prevStats,
+          completedToday: prevStats.completedToday + deltaCompleted
+        };
+      });
+
+      // STEP 3: Persist to database
+      await habitService.toggleHabitCompletion(habitId);
+      
+      // STEP 4: Silently reload accurate data (includes correct streak calculation)
+      await loadData(false, true);
+      
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to toggle habit';
+      setError(errorMessage);
+      
+      // STEP 5: Rollback on error
+      setHabits(previousHabits);
+      setStats(previousStats);
+      
+      throw err;
+    } finally {
+      isToggling.current = false;
+    }
+  }, [user, habits, stats, habitService, loadData]);
+
+  // ============================================================================
+  // UPDATE HABIT COMPLETION
+  // ============================================================================
+  const updateHabitCompletion = useCallback(async (habitId: string, count: number) => {
+    if (!user) return;
+
+    const previousHabits = [...habits];
+
+    try {
+      // Optimistic update
+      setHabits(prevHabits => {
+        return prevHabits.map(h => {
+          if (h.id !== habitId) return h;
+
+          const newProgress = count / h.target_count;
+          const isCompleted = count >= h.target_count;
+
+          return {
+            ...h,
+            completed: count,
+            progress: Math.min(newProgress, 1),
+            isCompleted
+          };
+        });
+      });
+
+      await habitService.updateHabitCompletion(habitId, count);
+      await loadData(false, true);
+      
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to update habit completion';
+      setError(errorMessage);
+      setHabits(previousHabits);
+      throw err;
+    }
+  }, [user, habits, habitService, loadData]);
+
+  // ============================================================================
+  // SYNC
+  // ============================================================================
   const syncData = useCallback(async () => {
     if (!user || !isOnline || isSyncing.current) return;
 
@@ -182,13 +288,8 @@ export const useHabits = (): UseHabitsReturn => {
       const syncResult = await habitService.syncHabits();
       setLastSyncResult(syncResult);
       
-      if (syncResult.success) {
-        setSyncStatus('synced');
-      } else {
-        setSyncStatus('error');
-      }
+      setSyncStatus(syncResult.success ? 'synced' : 'error');
       
-      // Reload data after sync
       await loadData(false, true);
     } catch (error) {
       console.error('Sync failed:', error);
@@ -205,45 +306,12 @@ export const useHabits = (): UseHabitsReturn => {
     }
   }, [user, isOnline, loadData, habitService]);
 
-  // Refetch data
   const refetch = useCallback(() => loadData(false), [loadData]);
-
-  // Refresh data (pull to refresh)
   const refresh = useCallback(() => loadData(true), [loadData]);
 
-  // Toggle habit completion
-  const toggleHabit = useCallback(async (habitId: string) => {
-    if (!user || isToggling.current) return;
-
-    isToggling.current = true;
-
-    try {
-      await habitService.toggleHabitCompletion(habitId);
-      await loadData(false, true);
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to toggle habit';
-      setError(errorMessage);
-      throw err;
-    } finally {
-      isToggling.current = false;
-    }
-  }, [user, loadData, habitService]);
-
-  // Update habit completion count
-  const updateHabitCompletion = useCallback(async (habitId: string, count: number) => {
-    if (!user) return;
-
-    try {
-      await habitService.updateHabitCompletion(habitId, count);
-      await loadData(false, true);
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to update habit completion';
-      setError(errorMessage);
-      throw err;
-    }
-  }, [user, loadData, habitService]);
-
-  // Create new habit
+  // ============================================================================
+  // CREATE HABIT
+  // ============================================================================
   const createHabit = useCallback(async (habitData: CreateHabitRequest) => {
     if (!user || isCreating.current) return;
 
@@ -262,7 +330,9 @@ export const useHabits = (): UseHabitsReturn => {
     }
   }, [user, loadData, habitService]);
 
-  // Update existing habit
+  // ============================================================================
+  // UPDATE HABIT
+  // ============================================================================
   const updateHabit = useCallback(async (habitId: string, updates: UpdateHabitRequest) => {
     if (!user) return;
 
@@ -277,7 +347,9 @@ export const useHabits = (): UseHabitsReturn => {
     }
   }, [user, loadData, habitService]);
 
-  // Delete habit
+  // ============================================================================
+  // DELETE HABIT
+  // ============================================================================
   const deleteHabit = useCallback(async (habitId: string) => {
     if (!user) return;
 
@@ -292,7 +364,9 @@ export const useHabits = (): UseHabitsReturn => {
     }
   }, [user, loadData, habitService]);
 
-  // Resolve conflict
+  // ============================================================================
+  // RESOLVE CONFLICT
+  // ============================================================================
   const resolveConflict = useCallback(async (habitId: string, resolution: 'local' | 'remote') => {
     if (!user) return;
 
@@ -307,7 +381,6 @@ export const useHabits = (): UseHabitsReturn => {
     }
   }, [user, loadData, habitService]);
 
-  // Clear error
   const clearError = useCallback(() => {
     setError(null);
   }, []);
@@ -330,6 +403,8 @@ export const useHabits = (): UseHabitsReturn => {
     deleteHabit,
     syncData,
     clearError,
-    resolveConflict
-  };
+    resolveConflict,
+    getAllCompletions: (userId: string, days?: number) => 
+    habitService.getAllCompletions(userId, days)
+};
 };

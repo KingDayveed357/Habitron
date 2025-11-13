@@ -1,167 +1,148 @@
 // /components/ui/SplashScreen.tsx
 import React, { useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, Animated, Dimensions } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
+import { View, Text, Animated, Image } from 'react-native';
+import { images } from '@/constants/images';
 
-const { width, height } = Dimensions.get('window');
-
- export const SplashScreen: React.FC = () => {
+export const SplashScreen: React.FC = () => {
   const fadeAnim = useRef(new Animated.Value(0)).current;
-  const scaleAnim = useRef(new Animated.Value(0.3)).current;
+  const scaleAnim = useRef(new Animated.Value(0.8)).current;
+  const logoScale = useRef(new Animated.Value(0.9)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
+  const dotAnims = useRef([
+    new Animated.Value(0.3),
+    new Animated.Value(0.3),
+    new Animated.Value(0.3),
+  ]).current;
 
   useEffect(() => {
-    // Parallel animations for a smooth entrance
+    // Main entrance animation
     Animated.parallel([
       Animated.timing(fadeAnim, {
         toValue: 1,
-        duration: 1000,
+        duration: 600,
         useNativeDriver: true,
       }),
       Animated.spring(scaleAnim, {
         toValue: 1,
-        tension: 20,
+        tension: 40,
         friction: 7,
+        useNativeDriver: true,
+      }),
+      Animated.spring(logoScale, {
+        toValue: 1,
+        tension: 35,
+        friction: 6,
+        delay: 150,
         useNativeDriver: true,
       }),
     ]).start();
 
-    // Continuous pulse animation
+    // Gentle pulse for logo
     Animated.loop(
       Animated.sequence([
         Animated.timing(pulseAnim, {
-          toValue: 1.1,
-          duration: 1000,
+          toValue: 1.05,
+          duration: 1500,
           useNativeDriver: true,
         }),
         Animated.timing(pulseAnim, {
           toValue: 1,
-          duration: 1000,
+          duration: 1500,
           useNativeDriver: true,
         }),
       ])
     ).start();
+
+    // Staggered loading dots
+    const dotAnimations = dotAnims.map((anim, index) =>
+      Animated.loop(
+        Animated.sequence([
+          Animated.delay(index * 200),
+          Animated.timing(anim, {
+            toValue: 1,
+            duration: 500,
+            useNativeDriver: true,
+          }),
+          Animated.timing(anim, {
+            toValue: 0.3,
+            duration: 500,
+            useNativeDriver: true,
+          }),
+        ])
+      )
+    );
+
+    Animated.parallel(dotAnimations).start();
   }, []);
 
   return (
-    <View style={styles.container}>
-      <LinearGradient
-        colors={['#667eea', '#764ba2', '#f093fb']}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.gradient}
+    <View className="flex-1 bg-white dark:bg-black items-center justify-center">
+      {/* Main content */}
+      <Animated.View
+        className="items-center"
+        style={{
+          opacity: fadeAnim,
+          transform: [{ scale: scaleAnim }],
+        }}
       >
+        {/* Logo */}
         <Animated.View
-          style={[
-            styles.logoContainer,
-            {
-              opacity: fadeAnim,
-              transform: [{ scale: scaleAnim }],
-            },
-          ]}
+          className="mb-8"
+          style={{
+            transform: [{ scale: Animated.multiply(logoScale, pulseAnim) }],
+          }}
         >
-          <Animated.View
-            style={[
-              styles.iconWrapper,
-              { transform: [{ scale: pulseAnim }] },
-            ]}
-          >
-            <View style={styles.icon}>
-              <Text style={styles.iconText}>✨</Text>
-            </View>
-          </Animated.View>
-
-          <Text style={styles.appName}>Habitron</Text>
-          <Text style={styles.tagline}>Build Better Habits with AI</Text>
-        </Animated.View>
-
-        <Animated.View style={[styles.footer, { opacity: fadeAnim }]}>
-          <View style={styles.loadingDots}>
-            {[0, 1, 2].map((i) => (
-              <Animated.View
-                key={i}
-                style={[
-                  styles.dot,
-                  {
-                    opacity: fadeAnim,
-                    transform: [
-                      {
-                        translateY: fadeAnim.interpolate({
-                          inputRange: [0, 1],
-                          outputRange: [0, -10],
-                        }),
-                      },
-                    ],
-                  },
-                ]}
-              />
-            ))}
+          <View className="w-32 h-32 items-center justify-center">
+            <Image
+              source={images.habitronLogo}
+              className="w-full h-full"
+              resizeMode="contain"
+            />
           </View>
         </Animated.View>
-      </LinearGradient>
+
+        {/* App name */}
+        <Text className="text-5xl font-bold text-gray-900 dark:text-white mb-3">
+          Habitron
+        </Text>
+
+        {/* Tagline */}
+        <View className="flex-row items-center gap-2">
+          <View className="w-2 h-2 rounded-full bg-primary" />
+          <Text className="text-base font-medium text-gray-600 dark:text-gray-400">
+            AI-Powered Habit Tracking
+          </Text>
+        </View>
+      </Animated.View>
+
+      {/* Loading indicator */}
+      <Animated.View
+        className="absolute bottom-24 items-center"
+        style={{ opacity: fadeAnim }}
+      >
+        <View className="flex-row gap-2 mb-3">
+          {dotAnims.map((anim, index) => (
+            <Animated.View
+              key={index}
+              className="w-2 h-2 rounded-full bg-indigo-600 dark:bg-indigo-500"
+              style={{
+                opacity: anim,
+                transform: [
+                  {
+                    scale: anim.interpolate({
+                      inputRange: [0.3, 1],
+                      outputRange: [0.8, 1.1],
+                    }),
+                  },
+                ],
+              }}
+            />
+          ))}
+        </View>
+        <Text className="text-sm font-medium text-gray-500 dark:text-gray-500">
+          Loading...
+        </Text>
+      </Animated.View>
     </View>
   );
 };
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  gradient: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  logoContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  iconWrapper: {
-    marginBottom: 30,
-  },
-  icon: {
-    width: 120,
-    height: 120,
-    borderRadius: 30,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.3,
-    shadowRadius: 20,
-    elevation: 10,
-  },
-  iconText: {
-    fontSize: 60,
-  },
-  appName: {
-    fontSize: 48,
-    fontWeight: 'bold',
-    color: '#fff',
-    marginBottom: 8,
-    letterSpacing: 1,
-    textShadowColor: 'rgba(0, 0, 0, 0.3)',
-    textShadowOffset: { width: 0, height: 2 },
-    textShadowRadius: 10,
-  },
-  tagline: {
-    fontSize: 16,
-    color: 'rgba(255, 255, 255, 0.9)',
-    letterSpacing: 0.5,
-  },
-  footer: {
-    position: 'absolute',
-    bottom: 50,
-  },
-  loadingDots: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  dot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#fff',
-  },
-});

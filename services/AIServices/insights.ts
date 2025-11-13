@@ -1,18 +1,35 @@
-// services/AIServices/insights.ts - BACKWARD COMPATIBLE VERSION
+// services/AIServices/insights.ts - OFFLINE-FIRST VERSION
 /**
- * AI Insights Service - Enhanced with Period Support
+ * 🎯 OFFLINE-FIRST AI INSIGHTS SERVICE
  * 
- * ✅ BACKWARD COMPATIBLE - All existing methods work exactly as before
- * ✨ NEW - Period context support added to existing methods
+ * Key Features:
+ * - Works with LocalHabitRecord and LocalCompletionRecord
+ * - Automatically loads user profile from onboarding
+ * - Builds context from SQLite data (not Supabase)
+ * - Caches insights with period + profile awareness
+ * - Backward compatible with existing API
  * 
- * @version 2.0.0 - Backward compatible enhancement
+ * @version 4.0.0 - Offline-first with profile personalization
  */
 
 import { apiPost } from '../apiClient'
+import AsyncStorage from '@react-native-async-storage/async-storage'
+import type { LocalHabitRecord, LocalCompletionRecord } from '@/types/habit'
 
 // ============================================================================
-// TYPES (All existing types preserved)
+// TYPES - Enhanced with Offline-First Support
 // ============================================================================
+
+export interface UserProfile {
+  focusAreas?: string[]
+  wakeupTime?: string
+  primaryChallenge?: string
+  routineLevel?: string
+  peakProductivityTime?: string
+  dailyTimeCommitment?: string
+  motivationFactors?: string[]
+  hasCommitment?: boolean
+}
 
 export interface AIInsight {
   id: string
@@ -53,7 +70,6 @@ export interface MoodInsight {
   confidence: number
 }
 
-// NEW: Optional period info (doesn't break existing code)
 export interface PeriodInfo {
   type: 'today' | 'week' | 'month' | 'last6months' | 'year' | 'lastyear' | 'alltime' | 'custom'
   startDate?: string
@@ -62,35 +78,44 @@ export interface PeriodInfo {
   label: string
 }
 
-// EXISTING: Context interface (period is optional, so backward compatible)
+// NEW: Offline-aware context built from local SQLite data
 export interface InsightsContext {
-  habits?: any[]
+  habits?: Array<{
+    id: string
+    title: string
+    icon: string
+    category: string
+    target_count: number
+    target_unit: string
+    frequency_type: string
+    currentStreak?: number
+    completionRate?: number
+    is_active: boolean
+  }>
   stats?: {
     totalHabits: number
     completedToday: number
     completionRate: number
     activeStreak: number
   }
-  userProfile?: {
-    name: string
-    timezone?: string
-    preferences?: string[]
-  }
+  userProfile?: UserProfile
   moodData?: any[]
-  habitHistory?: any[]
+  habitHistory?: LocalCompletionRecord[]
   timeframe?: 'today' | 'week' | 'month' | 'all'
-  period?: PeriodInfo // NEW but optional - won't break existing code
+  period?: PeriodInfo
 }
 
 interface CacheEntry<T> {
   data: T
   timestamp: number
   expiresAt: number
-  periodKey?: string // Optional for backward compatibility
+  periodKey?: string
+  hasProfile?: boolean
+  contextHash?: string
 }
 
 // ============================================================================
-// INSIGHTS SERVICE CLASS
+// INSIGHTS SERVICE CLASS - Offline-First Implementation
 // ============================================================================
 
 class InsightsService {
@@ -98,9 +123,9 @@ class InsightsService {
   private insightsCache = new Map<string, CacheEntry<AIInsight[]>>()
   private suggestionsCache = new Map<string, CacheEntry<HabitSuggestion[]>>()
   private moodInsightsCache = new Map<string, CacheEntry<MoodInsight[]>>()
+  private userProfileCache: UserProfile | null = null
   private readonly DEFAULT_CACHE_TTL = 5 * 60 * 1000 // 5 minutes
   
-  // Track in-flight requests (existing functionality)
   private pendingInsights = new Map<string, Promise<AIInsight[]>>()
   private pendingSuggestions = new Map<string, Promise<HabitSuggestion[]>>()
   private pendingMoodInsights = new Map<string, Promise<MoodInsight[]>>()
@@ -113,9 +138,76 @@ class InsightsService {
   }
 
   /**
-   * Get general insights
-   * ✅ BACKWARD COMPATIBLE - Works exactly as before
-   * ✨ ENHANCED - Now accepts optional period info in context
+   * 🆕 Load user profile from AsyncStorage (onboarding data)
+   */
+  private async loadUserProfile(): Promise<UserProfile | null> {
+    if (this.userProfileCache) {
+      return this.userProfileCache
+    }
+
+    try {
+      const profileJson = await AsyncStorage.getItem('userProfile')
+      if (profileJson) {
+        this.userProfileCache = JSON.parse(profileJson)
+        console.log('✅ User profile loaded for personalization:', {
+          focusAreas: this.userProfileCache.focusAreas?.length || 0,
+          hasChallenge: !!this.userProfileCache.primaryChallenge,
+          timeCommitment: this.userProfileCache.dailyTimeCommitment
+        })
+        return this.userProfileCache
+      }
+    } catch (error) {
+      console.warn('⚠️ Failed to load user profile:', error)
+    }
+
+    return null
+  }
+
+  /**
+   * 🆕 Refresh user profile cache (call after onboarding updates)
+   */
+  async refreshUserProfile(): Promise<void> {
+    this.userProfileCache = null
+    await this.loadUserProfile()
+  }
+
+  /**
+   * 🆕 Build context hash for cache invalidation
+   */
+  private buildContextHash(context: InsightsContext): string {
+    const parts = [
+      context.habits?.length || 0,
+      context.stats?.totalHabits || 0,
+      context.stats?.completedToday || 0,
+      context.stats?.completionRate || 0,
+      context.period?.type || 'today',
+      context.period?.totalDays || 1,
+      context.userProfile ? 'personalized' : 'generic'
+    ]
+    return parts.join('_')
+  }
+
+  /**
+   * 🆕 Enhance context with user profile and local SQLite data
+   */
+  private async enhanceContext(context: InsightsContext): Promise<InsightsContext> {
+    // Load user profile if not already in context
+    if (!context.userProfile) {
+      const profile = await this.loadUserProfile()
+      if (profile) {
+        context = { ...context, userProfile: profile }
+      }
+    }
+
+    // Ensure period context exists
+    return this.ensurePeriodContext(context)
+  }
+
+  /**
+   * Get general insights - OFFLINE-FIRST
+   * ✅ Works with LocalHabitRecord
+   * ✅ Automatically adds user profile
+   * ✅ Cache-aware with proper invalidation
    */
   async getInsights(
     userId: string,
@@ -128,12 +220,25 @@ class InsightsService {
     }
 
     const { forceRefresh = false, cacheTTL = this.DEFAULT_CACHE_TTL } = options
-    const cacheKey = this.generateCacheKey(userId, context, 'insights')
+    
+    // Enhance context with user profile
+    const enhancedContext = await this.enhanceContext(context)
+    const contextHash = this.buildContextHash(enhancedContext)
+    const cacheKey = this.generateCacheKey(userId, enhancedContext, 'insights')
+
+    console.log('📊 Getting insights:', {
+      userId: userId.substring(0, 8),
+      habitsCount: enhancedContext.habits?.length || 0,
+      hasProfile: !!enhancedContext.userProfile,
+      period: enhancedContext.period?.label || 'today',
+      contextHash,
+      forceRefresh
+    })
 
     // Check cache first
     if (!forceRefresh) {
       const cached = this.insightsCache.get(cacheKey)
-      if (cached && Date.now() < cached.expiresAt) {
+      if (cached && Date.now() < cached.expiresAt && cached.contextHash === contextHash) {
         console.log('📦 Returning cached insights')
         return cached.data
       }
@@ -147,7 +252,7 @@ class InsightsService {
     }
 
     // Create new request
-    const promise = this.fetchInsights(userId, context, cacheTTL, cacheKey)
+    const promise = this.fetchInsights(userId, enhancedContext, cacheTTL, cacheKey, contextHash)
     this.pendingInsights.set(cacheKey, promise)
 
     try {
@@ -158,9 +263,7 @@ class InsightsService {
   }
 
   /**
-   * Get habit suggestions
-   * ✅ BACKWARD COMPATIBLE
-   * ✨ ENHANCED - Period-aware suggestions
+   * Get habit suggestions - OFFLINE-FIRST
    */
   async getSuggestions(
     userId: string,
@@ -168,11 +271,14 @@ class InsightsService {
     options: { forceRefresh?: boolean; cacheTTL?: number } = {}
   ): Promise<HabitSuggestion[]> {
     const { forceRefresh = false, cacheTTL = this.DEFAULT_CACHE_TTL } = options
-    const cacheKey = this.generateCacheKey(userId, context, 'suggestions')
+    
+    const enhancedContext = await this.enhanceContext(context)
+    const contextHash = this.buildContextHash(enhancedContext)
+    const cacheKey = this.generateCacheKey(userId, enhancedContext, 'suggestions')
 
     if (!forceRefresh) {
       const cached = this.suggestionsCache.get(cacheKey)
-      if (cached && Date.now() < cached.expiresAt) {
+      if (cached && Date.now() < cached.expiresAt && cached.contextHash === contextHash) {
         console.log('📦 Returning cached suggestions')
         return cached.data
       }
@@ -181,7 +287,7 @@ class InsightsService {
     const pending = this.pendingSuggestions.get(cacheKey)
     if (pending) return pending
 
-    const promise = this.fetchSuggestions(userId, context, cacheTTL, cacheKey)
+    const promise = this.fetchSuggestions(userId, enhancedContext, cacheTTL, cacheKey, contextHash)
     this.pendingSuggestions.set(cacheKey, promise)
 
     try {
@@ -192,9 +298,7 @@ class InsightsService {
   }
 
   /**
-   * Get mood insights
-   * ✅ BACKWARD COMPATIBLE
-   * ✨ ENHANCED - Period context
+   * Get mood insights - OFFLINE-FIRST
    */
   async getMoodInsights(
     userId: string,
@@ -202,17 +306,22 @@ class InsightsService {
     options: { forceRefresh?: boolean; cacheTTL?: number } = {}
   ): Promise<MoodInsight[]> {
     const { forceRefresh = false, cacheTTL = this.DEFAULT_CACHE_TTL } = options
-    const cacheKey = this.generateCacheKey(userId, context, 'mood')
+    
+    const enhancedContext = await this.enhanceContext(context)
+    const contextHash = this.buildContextHash(enhancedContext)
+    const cacheKey = this.generateCacheKey(userId, enhancedContext, 'mood')
 
     if (!forceRefresh) {
       const cached = this.moodInsightsCache.get(cacheKey)
-      if (cached && Date.now() < cached.expiresAt) return cached.data
+      if (cached && Date.now() < cached.expiresAt && cached.contextHash === contextHash) {
+        return cached.data
+      }
     }
 
     const pending = this.pendingMoodInsights.get(cacheKey)
     if (pending) return pending
 
-    const promise = this.fetchMoodInsights(userId, context, cacheTTL, cacheKey)
+    const promise = this.fetchMoodInsights(userId, enhancedContext, cacheTTL, cacheKey, contextHash)
     this.pendingMoodInsights.set(cacheKey, promise)
 
     try {
@@ -223,48 +332,49 @@ class InsightsService {
   }
 
   /**
-   * Fetch insights from API
-   * ✨ ENHANCED - Automatically adds period info if not present
+   * Fetch insights from API with offline-first context
    */
   private async fetchInsights(
     userId: string,
     context: InsightsContext,
     cacheTTL: number,
-    cacheKey: string
+    cacheKey: string,
+    contextHash: string
   ): Promise<AIInsight[]> {
     try {
-      console.log('🔄 Fetching insights from API...')
-      
-      // NEW: Auto-add default period if not provided (backward compatible)
-      const enhancedContext = this.ensurePeriodContext(context)
+      console.log('🔄 Fetching personalized insights from API...', {
+        habitsCount: context.habits?.length || 0,
+        hasProfile: !!context.userProfile,
+        period: context.period?.label
+      })
       
       const response = await apiPost<{ insights: AIInsight[] }>(
         '/ai-insights',
         {
           userId,
           type: 'insights',
-          context: enhancedContext
+          context
         },
         { timeout: 15000 }
       )
 
       let insights = Array.isArray(response?.insights) ? response.insights : []
       
-      // Ensure unique IDs
       insights = insights.map((insight, index) => ({
         ...insight,
         id: insight.id || `insight_${Date.now()}_${index}`
       }))
 
-      console.log(`✅ Got ${insights.length} insights from API`)
+      console.log(`✅ Got ${insights.length} personalized insights from API`)
 
-      // Cache results
       if (insights.length > 0) {
         this.insightsCache.set(cacheKey, {
           data: insights,
           timestamp: Date.now(),
           expiresAt: Date.now() + cacheTTL,
-          periodKey: context.period?.label
+          periodKey: context.period?.label,
+          hasProfile: !!context.userProfile,
+          contextHash
         })
       }
 
@@ -272,14 +382,12 @@ class InsightsService {
     } catch (error: any) {
       console.error('❌ Failed to fetch insights:', error.message)
       
-      // Try stale cache
       const cached = this.insightsCache.get(cacheKey)
       if (cached) {
         console.log('📦 Returning stale cache due to error')
         return cached.data
       }
 
-      // Return fallback
       return this.getFallbackInsights(context)
     }
   }
@@ -291,19 +399,18 @@ class InsightsService {
     userId: string,
     context: InsightsContext,
     cacheTTL: number,
-    cacheKey: string
+    cacheKey: string,
+    contextHash: string
   ): Promise<HabitSuggestion[]> {
     try {
-      console.log('🔄 Fetching suggestions from API...')
-      
-      const enhancedContext = this.ensurePeriodContext(context)
+      console.log('🔄 Fetching personalized suggestions from API...')
       
       const response = await apiPost<{ suggestions: HabitSuggestion[] }>(
         '/ai-insights',
         {
           userId,
           type: 'suggestions',
-          context: enhancedContext
+          context
         },
         { timeout: 15000 }
       )
@@ -315,14 +422,16 @@ class InsightsService {
         id: suggestion.id || `suggestion_${Date.now()}_${index}`
       }))
 
-      console.log(`✅ Got ${suggestions.length} suggestions from API`)
+      console.log(`✅ Got ${suggestions.length} personalized suggestions from API`)
 
       if (suggestions.length > 0) {
         this.suggestionsCache.set(cacheKey, {
           data: suggestions,
           timestamp: Date.now(),
           expiresAt: Date.now() + cacheTTL,
-          periodKey: context.period?.label
+          periodKey: context.period?.label,
+          hasProfile: !!context.userProfile,
+          contextHash
         })
       }
 
@@ -344,17 +453,16 @@ class InsightsService {
     userId: string,
     context: InsightsContext,
     cacheTTL: number,
-    cacheKey: string
+    cacheKey: string,
+    contextHash: string
   ): Promise<MoodInsight[]> {
     try {
-      const enhancedContext = this.ensurePeriodContext(context)
-      
       const response = await apiPost<{ moodInsights: MoodInsight[] }>(
         '/ai-insights',
         {
           userId,
           type: 'mood_analysis',
-          context: enhancedContext
+          context
         },
         { timeout: 15000 }
       )
@@ -371,7 +479,9 @@ class InsightsService {
           data: moodInsights,
           timestamp: Date.now(),
           expiresAt: Date.now() + cacheTTL,
-          periodKey: context.period?.label
+          periodKey: context.period?.label,
+          hasProfile: !!context.userProfile,
+          contextHash
         })
       }
 
@@ -388,7 +498,6 @@ class InsightsService {
 
   /**
    * Get habit-specific insights
-   * ✅ BACKWARD COMPATIBLE
    */
   async getHabitDetailInsights(
     userId: string,
@@ -396,7 +505,7 @@ class InsightsService {
     context: InsightsContext
   ): Promise<AIInsight[]> {
     try {
-      const enhancedContext = this.ensurePeriodContext(context)
+      const enhancedContext = await this.enhanceContext(context)
       
       const response = await apiPost<{ insights: AIInsight[] }>(
         '/ai-insights',
@@ -424,16 +533,13 @@ class InsightsService {
   }
 
   /**
-   * NEW: Ensure period context exists (backward compatible helper)
-   * If period is not provided, auto-generate based on timeframe
+   * Ensure period context exists
    */
   private ensurePeriodContext(context: InsightsContext): InsightsContext {
-    // If period already exists, return as-is
     if (context.period) {
       return context
     }
 
-    // Auto-generate period from timeframe (backward compatible)
     const timeframe = context.timeframe || 'today'
     let periodType: PeriodInfo['type'] = 'today'
     let totalDays = 1
@@ -473,25 +579,24 @@ class InsightsService {
   }
 
   /**
-   * Generate cache key
-   * ✅ BACKWARD COMPATIBLE - Works with or without period info
+   * Generate cache key with context awareness
    */
   private generateCacheKey(userId: string, context: InsightsContext, type: string): string {
     const timestamp = Math.floor(Date.now() / (5 * 60 * 1000)) // 5-minute buckets
     const habitsCount = context.habits?.length || 0
     const completionRate = context.stats?.completionRate || 0
     
-    // NEW: Include period in cache key if available
     const periodKey = context.period 
       ? `${context.period.type}_${context.period.totalDays}`
       : (context.timeframe || 'default')
     
-    return `${userId}_${type}_${periodKey}_${habitsCount}_${completionRate}_${timestamp}`
+    const profileKey = context.userProfile ? 'personalized' : 'generic'
+    
+    return `${userId}_${type}_${periodKey}_${habitsCount}_${completionRate}_${profileKey}_${timestamp}`
   }
 
   /**
    * Clear cache
-   * ✅ BACKWARD COMPATIBLE - Existing signature preserved
    */
   clearCache(userId?: string): void {
     if (userId) {
@@ -522,11 +627,12 @@ class InsightsService {
       this.moodInsightsCache.clear()
       console.log('🗑️ Cleared all cache')
     }
+    
+    this.userProfileCache = null
   }
 
   /**
    * Preload insights
-   * ✅ BACKWARD COMPATIBLE
    */
   async preloadInsights(userId: string, context: InsightsContext): Promise<void> {
     this.getInsights(userId, context, { forceRefresh: false }).catch(err => {
@@ -536,34 +642,35 @@ class InsightsService {
 
   /**
    * Get cache statistics
-   * ✅ BACKWARD COMPATIBLE - Returns same format
    */
-  getCacheStats(): { insights: number; suggestions: number; moodInsights: number } {
+  getCacheStats(): { insights: number; suggestions: number; moodInsights: number; hasProfile: boolean } {
     return {
       insights: this.insightsCache.size,
       suggestions: this.suggestionsCache.size,
-      moodInsights: this.moodInsightsCache.size
+      moodInsights: this.moodInsightsCache.size,
+      hasProfile: !!this.userProfileCache
     }
   }
 
   /**
-   * Fallback insights
-   * ✅ BACKWARD COMPATIBLE - Same behavior, period-aware messaging
+   * Fallback insights (profile-aware)
    */
   private getFallbackInsights(context: InsightsContext): AIInsight[] {
     const insights: AIInsight[] = []
     const stats = context.stats
-    const period = context.period
+    const profile = context.userProfile
     const timestamp = Date.now()
 
-    const periodLabel = period?.label || 'this period'
-
     if (!stats || stats.totalHabits === 0) {
+      const focusMessage = profile?.focusAreas?.length 
+        ? `Let's start with ${profile.focusAreas[0]} habits!` 
+        : 'Create your first habit to begin building better routines.'
+      
       return [{
         id: `fallback_welcome_${timestamp}`,
         type: 'motivation',
         title: 'Start Your Journey',
-        description: 'Create your first habit to begin building better routines.',
+        description: focusMessage,
         icon: '🚀',
         priority: 'high',
         actionable: true,
@@ -587,11 +694,15 @@ class InsightsService {
     }
 
     if (stats.completionRate < 50 && stats.totalHabits > 0) {
+      const tip = profile?.dailyTimeCommitment === '5min' 
+        ? 'Start with just 5-minute habits to build momentum.'
+        : 'Try focusing on 1-2 core habits to build momentum.'
+      
       insights.push({
         id: `fallback_low_completion_${timestamp}`,
         type: 'tip',
         title: 'Focus on Fewer Habits',
-        description: 'Try focusing on 1-2 core habits to build momentum.',
+        description: tip,
         icon: '💡',
         priority: 'medium'
       })
