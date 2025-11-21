@@ -1,9 +1,18 @@
+// components/community/ChallengeCard.tsx - FIXED VERSION
 import React from 'react';
 import { View, Text, TouchableOpacity } from 'react-native';
-import { Challenge } from '@/interfaces/interfaces';
 
 interface ChallengeCardProps {
-  challenge: Challenge;
+  challenge: {
+    id: string;
+    title: string;
+    description: string;
+    participants: number;
+    duration: string;
+    difficulty: 'Easy' | 'Medium' | 'Hard';
+    icon: string;
+    progress?: number;
+  };
   onJoin?: (challengeId: string) => void;
   onContinue?: (challengeId: string) => void;
 }
@@ -13,7 +22,7 @@ export const ChallengeCard: React.FC<ChallengeCardProps> = ({
   onJoin,
   onContinue
 }) => {
-  const getDifficultyColor = (difficulty: Challenge['difficulty']) => {
+  const getDifficultyColor = (difficulty: 'Easy' | 'Medium' | 'Hard') => {
     switch (difficulty) {
       case 'Easy': return 'text-green-600 dark:text-green-400';
       case 'Medium': return 'text-yellow-600 dark:text-yellow-400';
@@ -23,7 +32,7 @@ export const ChallengeCard: React.FC<ChallengeCardProps> = ({
   };
 
   const handleButtonPress = () => {
-    if (challenge.progress) {
+    if (challenge.progress !== undefined) {
       onContinue?.(challenge.id);
     } else {
       onJoin?.(challenge.id);
@@ -31,7 +40,7 @@ export const ChallengeCard: React.FC<ChallengeCardProps> = ({
   };
 
   return (
-    <View className="card">
+    <View className="card mb-4">
       <View className="flex-row items-center mb-3">
         <Text className="text-3xl mr-3">{challenge.icon}</Text>
         <View className="flex-1">
@@ -40,7 +49,7 @@ export const ChallengeCard: React.FC<ChallengeCardProps> = ({
         </View>
       </View>
       
-      {challenge.progress && (
+      {challenge.progress !== undefined && (
         <View className="mb-3">
           <View className="flex-row justify-between mb-1">
             <Text className="text-caption">Your Progress</Text>
@@ -57,19 +66,23 @@ export const ChallengeCard: React.FC<ChallengeCardProps> = ({
       
       <View className="flex-row items-center justify-between">
         <View className="flex-row items-center">
-          <Text className="text-caption mr-4">
-            👥 {challenge.participants.toLocaleString()} joined
-          </Text>
-          <Text className={`text-sm font-medium ${getDifficultyColor(challenge.difficulty)}`}>
-            {challenge.difficulty}
-          </Text>
+          <View className="mr-4">
+            <Text className="text-caption">
+              👥 {challenge.participants.toLocaleString()} joined
+            </Text>
+          </View>
+          <View>
+            <Text className={`text-sm font-medium ${getDifficultyColor(challenge.difficulty)}`}>
+              {challenge.difficulty}
+            </Text>
+          </View>
         </View>
         <TouchableOpacity 
           className="btn-primary px-4 py-2 rounded-lg"
           onPress={handleButtonPress}
         >
           <Text className="text-btn-primary-text font-medium text-sm">
-            {challenge.progress ? 'Continue' : 'Join'}
+            {challenge.progress !== undefined ? 'Continue' : 'Join'}
           </Text>
         </TouchableOpacity>
       </View>

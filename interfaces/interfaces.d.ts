@@ -176,4 +176,248 @@ export interface UserStats {
 }
 
 
+// Community and Feed related interfaces
+export interface FeedItem {
+  id: string;
+  user_id: string;
+  type: 'completion' | 'milestone' | 'streak' | 'challenge_joined' | 'challenge_completed' | 'habit_created' | 'habit_revived';
+  habit_id: string | null;
+  challenge_id: string | null;
+  metadata: FeedItemMetadata;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FeedItemMetadata {
+  habit_title?: string;
+  habit_icon?: string;
+  habit_category?: string;
+  challenge_title?: string;
+  challenge_icon?: string;
+  challenge_difficulty?: 'Easy' | 'Medium' | 'Hard';
+  challenge_duration?: number;
+  total_completions?: number;
+  streak_days?: number;
+  completed_count?: number;
+  days_since_last?: number;
+  [key: string]: any;
+}
+
+export interface EnrichedFeedItem extends FeedItem {
+  likes_count: number;
+  is_liked_by_user: boolean;
+  user_name: string;
+  user_avatar: string | null;
+  user_streak: number;
+}
+
+export interface Challenge {
+  id: string;
+  created_by: 'ai' | 'user';
+  title: string;
+  description: string;
+  difficulty: 'Easy' | 'Medium' | 'Hard';
+  duration_days: number;
+  icon: string;
+  ai_metadata: AIMetadata;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AIMetadata {
+  reasoning?: string;
+  generated_at?: string;
+  personalization_factors?: string[];
+  confidence_score?: number;
+  [key: string]: any;
+}
+
+export interface EnrichedChallenge extends Challenge {
+  participants_count: number;
+  user_progress: number;
+  user_joined: boolean;
+}
+
+export interface ChallengeParticipant {
+  id: string;
+  challenge_id: string;
+  user_id: string;
+  progress_percent: number;
+  joined_at: string;
+  completed_at: string | null;
+}
+
+export interface FeedLike {
+  id: string;
+  feed_id: string;
+  user_id: string;
+  created_at: string;
+}
+
+// Props for components
+
+export interface FeedItemComponentProps {
+  item: EnrichedFeedItem;
+  onLike?: (itemId: string) => void;
+  onEncourage?: (itemId: string) => void;
+  onComment?: (itemId: string) => void;
+}
+
+export interface ChallengeCardProps {
+  challenge: {
+    id: string;
+    title: string;
+    description: string;
+    participants: number;
+    duration: string;
+    difficulty: 'Easy' | 'Medium' | 'Hard';
+    icon: string;
+    progress?: number;
+  };
+  onJoin?: (challengeId: string) => void;
+  onContinue?: (challengeId: string) => void;
+}
+
+// API Response types
+
+export interface GetFeedWithLikesResponse {
+  id: string;
+  user_id: string;
+  type: string;
+  habit_id: string | null;
+  challenge_id: string | null;
+  metadata: any;
+  created_at: string;
+  likes_count: number;
+  is_liked_by_user: boolean;
+  user_name: string;
+  user_avatar: string | null;
+  user_streak: number;
+}
+
+export interface GetChallengesWithStatsResponse {
+  id: string;
+  title: string;
+  description: string;
+  difficulty: 'Easy' | 'Medium' | 'Hard';
+  duration_days: number;
+  icon: string;
+  created_by: 'ai' | 'user';
+  participants_count: number;
+  user_progress: number;
+  user_joined: boolean;
+}
+
+// Edge Function payloads
+
+export interface GenerateAIChallengesRequest {
+  // Empty - uses user context from auth
+}
+
+export interface GenerateAIChallengesResponse {
+  success: boolean;
+  challenges: Challenge[];
+  count: number;
+  error?: string;
+}
+
+export interface GenerateFeedEventRequest {
+  type: 'completion' | 'milestone' | 'streak' | 'challenge_joined' | 'challenge_completed' | 'habit_created' | 'habit_revived';
+  habit_id?: string;
+  challenge_id?: string;
+  metadata?: Record<string, any>;
+}
+
+export interface GenerateFeedEventResponse {
+  success: boolean;
+  posted: boolean;
+  feed_item?: FeedItem;
+  message?: string;
+  error?: string;
+}
+
+// Internal types for AI generation
+
+export interface UserHabitData {
+  activeHabits: any[];
+  streakData: Array<{
+    habitId: string;
+    title: string;
+    currentStreak: number;
+    completions: number;
+  }>;
+  missedHabits: any[];
+  completionHistory: any[];
+  userGoal: any;
+  preferredDifficulty: string;
+}
+
+export interface GeneratedChallenge {
+  title: string;
+  description: string;
+  difficulty: 'Easy' | 'Medium' | 'Hard';
+  duration_days: number;
+  icon: string;
+  reasoning: string;
+}
+
+// Realtime subscription types
+
+export interface FeedRealtimePayload {
+  type: 'INSERT' | 'UPDATE' | 'DELETE';
+  table: 'feed_items' | 'feed_likes' | 'challenge_participants';
+  schema: 'public';
+  old: any;
+  new: any;
+}
+
+// Filter and sorting options
+
+export type FeedSortOption = 'recent' | 'popular' | 'following';
+export type FeedFilterType = 'all' | 'completion' | 'milestone' | 'streak' | 'challenge';
+
+export interface FeedFilters {
+  sort: FeedSortOption;
+  type?: FeedFilterType;
+  dateRange?: {
+    start: Date;
+    end: Date;
+  };
+}
+
+export interface ChallengeFilters {
+  difficulty?: 'Easy' | 'Medium' | 'Hard';
+  duration?: '7' | '14' | '21' | '30' | '60' | '90';
+  joined?: boolean;
+}
+
+// Statistics and analytics
+
+export interface CommunityStats {
+  total_feed_items: number;
+  total_challenges: number;
+  active_participants: number;
+  average_likes_per_post: number;
+  most_popular_challenge: Challenge | null;
+  trending_habits: Array<{
+    habit_id: string;
+    title: string;
+    mention_count: number;
+  }>;
+}
+
+export interface UserCommunityStats {
+  posts_created: number;
+  likes_received: number;
+  challenges_joined: number;
+  challenges_completed: number;
+  encouragements_sent: number;
+  encouragements_received: number;
+}
+
+// Update your existing interfaces.ts to include these
+// Or merge with existing community-related interfaces
+
+
 export type TabType = 'feed' | 'challenges' | 'leaderboard' | 'discussions';

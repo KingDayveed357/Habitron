@@ -1,21 +1,16 @@
-// app/components/habit/EditHabitModal.tsx
+// app/components/habit/EditHabitModal.tsx - FIXED VERSION
 import React from 'react';
-import {
-  Modal,
-  SafeAreaView,
-  View,
-  Text,
-  TouchableOpacity,
-  ScrollView,
-} from 'react-native';
+import { Modal, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { HabitForm } from './HabitForm';
 import { UpdateHabitRequest, HabitWithCompletion } from '@/types/habit';
+import { HabitReminder } from '@/services/notificationService';
 
 interface EditHabitModalProps {
   visible: boolean;
   habit: HabitWithCompletion;
   onClose: () => void;
-  onSave: (data: UpdateHabitRequest) => Promise<void>;
+  onSave: (data: UpdateHabitRequest, reminders?: HabitReminder[]) => Promise<void>;
   loading?: boolean;
 }
 
@@ -27,6 +22,7 @@ export const EditHabitModal: React.FC<EditHabitModalProps> = ({
   loading = false,
 }) => {
   const initialData: UpdateHabitRequest = {
+    id: habit.id,
     title: habit.title,
     icon: habit.icon,
     description: habit.description,
@@ -39,6 +35,23 @@ export const EditHabitModal: React.FC<EditHabitModalProps> = ({
     bg_color: habit.bg_color,
   };
 
+  // CRITICAL FIX: Handle reminders in onSave
+  const handleSave = async (
+    data: UpdateHabitRequest,
+    reminders?: HabitReminder[]
+  ) => {
+    console.log('📝 Saving habit with reminders:', reminders);
+    
+    // Convert HabitReminder[] to the format expected by updateHabit
+    const reminderData = reminders?.map(r => ({
+      time: r.time,
+      days: r.days,
+      enabled: r.enabled
+    }));
+
+    await onSave(data, reminderData as any);
+  };
+
   return (
     <Modal
       visible={visible}
@@ -46,11 +59,14 @@ export const EditHabitModal: React.FC<EditHabitModalProps> = ({
       presentationStyle="pageSheet"
       onRequestClose={onClose}
     >
-      <SafeAreaView className="flex-1 bg-white dark:bg-gray-900">
+      <SafeAreaView 
+        className="flex-1 bg-white dark:bg-gray-900"
+        edges={['top', 'bottom', 'left', 'right']}
+      >
         <HabitForm
           mode="edit"
           initialData={initialData}
-          onSubmit={onSave}
+          onSubmit={handleSave}
           onCancel={onClose}
           loading={loading}
         />

@@ -1,4 +1,4 @@
-// app/components/modal/CreateHabit.tsx
+// app/components/modal/CreateHabit.tsx - FIXED VERSION
 import { useState } from 'react';
 import { Stack } from 'expo-router';
 import { View, Text, TouchableOpacity, Alert } from 'react-native';
@@ -8,6 +8,7 @@ import { HabitForm } from './HabitForm';
 import { CreateHabitRequest } from '@/types/habit';
 import { useHabits } from '@/hooks/usehabits';
 import { useAuth } from '@/hooks/useAuth';
+import { HabitReminder } from '@/services/notificationService';
 
 const CreateHabitScreen = () => {
   const router = useRouter();
@@ -15,7 +16,11 @@ const CreateHabitScreen = () => {
   const { createHabit } = useHabits();
   const [loading, setLoading] = useState(false);
 
-  const handleSave = async (habitData: CreateHabitRequest) => {
+  // CRITICAL FIX: Accept reminders parameter
+  const handleSave = async (
+    habitData: CreateHabitRequest,
+    reminders?: HabitReminder[]
+  ) => {
     if (!user) {
       Alert.alert('Error', 'You must be signed in to create habits');
       return;
@@ -23,7 +28,17 @@ const CreateHabitScreen = () => {
 
     setLoading(true);
     try {
-      await createHabit(habitData);
+      console.log('📝 Creating habit with data:', habitData);
+      console.log('⏰ Reminders to create:', reminders);
+
+      // Convert HabitReminder[] to the format expected by createHabit
+      const reminderData = reminders?.map(r => ({
+        time: r.time,
+        days: r.days,
+        enabled: r.enabled
+      }));
+
+      await createHabit(habitData, reminderData);
 
       Alert.alert(
         'Success!',
@@ -36,8 +51,11 @@ const CreateHabitScreen = () => {
         ]
       );
     } catch (error) {
-      console.error('Error creating habit:', error);
-      Alert.alert('Error', 'Failed to create habit. Please try again.');
+      console.error('❌ Error creating habit:', error);
+      Alert.alert(
+        'Error',
+        error instanceof Error ? error.message : 'Failed to create habit. Please try again.'
+      );
     } finally {
       setLoading(false);
     }

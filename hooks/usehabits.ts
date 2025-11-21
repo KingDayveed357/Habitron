@@ -312,40 +312,60 @@ export const useHabits = (): UseHabitsReturn => {
   // ============================================================================
   // CREATE HABIT
   // ============================================================================
-  const createHabit = useCallback(async (habitData: CreateHabitRequest) => {
-    if (!user || isCreating.current) return;
+ const createHabit = useCallback(async (
+  habitData: CreateHabitRequest,
+  reminders?: Array<{ time: string; days: string[]; enabled: boolean }>
+) => {
+  if (!user || isCreating.current) return;
 
-    isCreating.current = true;
+  isCreating.current = true;
 
-    try {
-      setError(null);
-      await habitService.createHabit(habitData);
-      await loadData();
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to create habit';
-      setError(errorMessage);
-      throw err;
-    } finally {
-      isCreating.current = false;
-    }
-  }, [user, loadData, habitService]);
+  try {
+    setError(null);
+    
+    // Use the new method that handles reminders
+    await habitService.createHabitWithReminders(habitData, reminders);
+    
+    await loadData();
+    
+    console.log('✅ Habit created successfully with reminders');
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : 'Failed to create habit';
+    setError(errorMessage);
+    console.error('❌ Error creating habit:', err);
+    throw err;
+  } finally {
+    isCreating.current = false;
+  }
+}, [user, loadData, habitService]);
+
 
   // ============================================================================
   // UPDATE HABIT
   // ============================================================================
-  const updateHabit = useCallback(async (habitId: string, updates: UpdateHabitRequest) => {
-    if (!user) return;
+const updateHabit = useCallback(async (
+  habitId: string,
+  updates: UpdateHabitRequest,
+  reminders?: Array<{ time: string; days: string[]; enabled: boolean }>
+) => {
+  if (!user) return;
 
-    try {
-      setError(null);
-      await habitService.updateHabit(habitId, updates);
-      await loadData(false, true);
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to update habit';
-      setError(errorMessage);
-      throw err;
-    }
-  }, [user, loadData, habitService]);
+  try {
+    setError(null);
+    
+    // Use the new method that handles reminders
+    await habitService.updateHabitWithReminders(habitId, updates, reminders);
+    
+    await loadData(false, true);
+    
+    console.log('✅ Habit updated successfully with reminders');
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : 'Failed to update habit';
+    setError(errorMessage);
+    console.error('❌ Error updating habit:', err);
+    throw err;
+  }
+}, [user, loadData, habitService]);
 
   // ============================================================================
   // DELETE HABIT

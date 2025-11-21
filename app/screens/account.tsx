@@ -1,3 +1,4 @@
+// app/(tabs)/account.tsx 
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
@@ -14,7 +15,6 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import {
-  User,
   Settings,
   Bell,
   Shield,
@@ -22,13 +22,6 @@ import {
   LogOut,
   Edit3,
   Camera,
-  Crown,
-  BarChart3,
-  Target,
-  Zap,
-  Moon,
-  Volume2,
-  Mail,
   Lock,
   Trash2,
   Download,
@@ -39,20 +32,16 @@ import {
   EyeOff,
   Check,
   X,
+  Moon,
+  Mail,
 } from 'lucide-react-native';
 import { useTheme } from '@/context/ThemeContext';
 import { useAuth } from '@/hooks/useAuth';
-import NavigationButton from '../components/ui/NavButton';
-import BackButton from '../components/ui/BackButton';
+import { supabase } from '@/services/supabase';
 
-interface UserStats {
-  streakDays: number;
-  habitsCompleted: number;
-  totalHabits: number;
-  weeklyGoal: number;
-}
-
-// Move PasswordInput outside the main component to prevent re-creation
+// ============================================================================
+// PASSWORD INPUT COMPONENT
+// ============================================================================
 const PasswordInput: React.FC<{
   value: string;
   onChangeText: (text: string) => void;
@@ -81,114 +70,230 @@ const PasswordInput: React.FC<{
   </View>
 ));
 
+// ============================================================================
+// MAIN ACCOUNT SCREEN COMPONENT
+// ============================================================================
 const AccountScreen: React.FC = () => {
   const { theme, toggleTheme, isDark } = useTheme();
-  const { user, signOut, updateProfile, changePassword, loading } = useAuth();
+  const { user, signOut, changePassword, loading } = useAuth();
   
-  const [stats, setStats] = useState<UserStats>({
-    streakDays: 47,
-    habitsCompleted: 234,
-    totalHabits: 8,
-    weeklyGoal: 85,
-  });
-
+  // Settings state
   const [settings, setSettings] = useState({
-    notifications: true,
-    soundEnabled: true,
-    weeklyReports: true,
+    notifications: false,
+    weeklyReports: false,
+    dataPrivacy: true, // New: Privacy setting for community features
   });
 
+  // Modal states
   const [showEditProfile, setShowEditProfile] = useState(false);
   const [showChangePassword, setShowChangePassword] = useState(false);
+  const [showPrivacyModal, setShowPrivacyModal] = useState(false);
+  
+  // Edit profile states
   const [editName, setEditName] = useState('');
   const [editEmail, setEditEmail] = useState('');
+  
+  // Password states
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showCurrentPassword, setShowCurrentPassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  
+  // Loading states
   const [isUpdating, setIsUpdating] = useState(false);
 
-  // Use useCallback to prevent function recreation on every render
-  const toggleCurrentPassword = useCallback(() => {
-    setShowCurrentPassword(!showCurrentPassword);
-  }, [showCurrentPassword]);
-
-  const toggleNewPassword = useCallback(() => {
-    setShowNewPassword(!showNewPassword);
-  }, [showNewPassword]);
-
-  const toggleConfirmPassword = useCallback(() => {
-    setShowConfirmPassword(!showConfirmPassword);
-  }, [showConfirmPassword]);
-
-useEffect(() => {
-  if (user) {
-    setEditName(user.name || '');
-    setEditEmail(user.email || '');
-  } else {
-  
-    setEditName('');
-    setEditEmail('');
-  }
-}, [user]);
-
-  const getThemeLabel = () => {
-    if (theme === 'system') {
-      return `System (${isDark ? 'Dark' : 'Light'})`;
+  // ============================================================================
+  // LOAD USER SETTINGS
+  // ============================================================================
+  useEffect(() => {
+    if (user) {
+      setEditName(user.name || '');
+      setEditEmail(user.email || '');
+      loadUserSettings();
     }
-    return theme.charAt(0).toUpperCase() + theme.slice(1);
+  }, [user]);
+
+  const loadUserSettings = async () => {
+    if (!user) return;
+    
+    try {
+      const { data, error } = await supabase
+        .from('user_settings')
+        .select('*')
+        .eq('user_id', user.id)
+        .single();
+
+      if (data && !error) {
+        setSettings({
+          notifications: data.notifications_enabled ?? false,
+          weeklyReports: data.weekly_reports ?? false,
+          dataPrivacy: data.data_privacy ?? true,
+        });
+      }
+    } catch (error) {
+      console.error('Error loading settings:', error);
+    }
   };
 
-  const getThemeIcon = () => {
-    if (theme === 'dark') return '🌙';
-    if (theme === 'light') return '☀️';
-    return '🔄'; // system
-  };
+  // ============================================================================
+  // SAVE SETTINGS TO DATABASE
+  // ============================================================================
+const saveSettings = async (newSettings: typeof settings) => {
+  if (!user) return;
 
-const handleLogout = () => {
-  Alert.alert(
-    'Logout',
-    'Are you sure you want to logout?',
-    [
-      { text: 'Cancel', style: 'cancel' },
-      { 
-        text: 'Logout', 
-        style: 'destructive', 
-        onPress: async () => {
-          try {
-            const result = await signOut();
-            
-            if (result.success) {
-              // Wait for state to update before navigating
-              setTimeout(() => {
-                router.replace('/auth/signin');
-              }, 150);
-            } else {
-              Alert.alert('Error', result.error || 'Failed to logout');
-            }
-          } catch (error) {
-            console.error('Logout error:', error);
-            Alert.alert('Error', 'An unexpected error occurred during logout');
-          }
-        }
-      },
-    ]
-  );
+  try {
+    // First, try to fetch existing settings
+    const { data: existingSettings } = await supabase
+      .from('user_settings')
+      .select('id')
+      .eq('user_id', user.id)
+      .single();
+
+    if (existingSettings) {
+      // Update existing record
+      const { error } = await supabase
+        .from('user_settings')
+        .update({
+          notifications_enabled: newSettings.notifications,
+          weekly_reports: newSettings.weeklyReports,
+          data_privacy: newSettings.dataPrivacy,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('user_id', user.id);
+
+      if (error) throw error;
+    } else {
+      // Insert new record
+      const { error } = await supabase
+        .from('user_settings')
+        .insert({
+          user_id: user.id,
+          notifications_enabled: newSettings.notifications,
+          weekly_reports: newSettings.weeklyReports,
+          data_privacy: newSettings.dataPrivacy,
+        });
+
+      if (error) throw error;
+    }
+  } catch (error) {
+    console.error('Error saving settings:', error);
+    Alert.alert('Error', 'Failed to save settings');
+  }
 };
 
+  // ============================================================================
+  // TOGGLE CALLBACKS
+  // ============================================================================
+  const toggleCurrentPassword = useCallback(() => {
+    setShowCurrentPassword(prev => !prev);
+  }, []);
+
+  const toggleNewPassword = useCallback(() => {
+    setShowNewPassword(prev => !prev);
+  }, []);
+
+  const toggleConfirmPassword = useCallback(() => {
+    setShowConfirmPassword(prev => !prev);
+  }, []);
+
+  // ============================================================================
+  // HANDLE LOGOUT
+  // ============================================================================
+  const handleLogout = () => {
+    Alert.alert(
+      'Logout',
+      'Are you sure you want to logout?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Logout', 
+          style: 'destructive', 
+          onPress: async () => {
+            try {
+              const result = await signOut();
+              
+              if (result.success) {
+                setTimeout(() => {
+                  router.replace('/auth/signin');
+                }, 150);
+              } else {
+                Alert.alert('Error', result.error || 'Failed to logout');
+              }
+            } catch (error) {
+              console.error('Logout error:', error);
+              Alert.alert('Error', 'An unexpected error occurred during logout');
+            }
+          }
+        },
+      ]
+    );
+  };
+
+  // ============================================================================
+  // HANDLE DELETE ACCOUNT
+  // ============================================================================
   const handleDeleteAccount = () => {
     Alert.alert(
       'Delete Account',
       'This action cannot be undone. All your data will be permanently deleted.',
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Delete', style: 'destructive', onPress: () => console.log('Account deleted') },
+        { 
+          text: 'Delete', 
+          style: 'destructive', 
+          onPress: async () => {
+            try {
+              if (!user) return;
+
+              setIsUpdating(true);
+
+              // Call edge function to delete user account
+              const { data: { session } } = await supabase.auth.getSession();
+              if (!session) throw new Error('No session');
+
+              const response = await fetch(
+                `${process.env.EXPO_PUBLIC_SUPABASE_URL}/functions/v1/delete-user-account`,
+                {
+                  method: 'POST',
+                  headers: {
+                    'Authorization': `Bearer ${session.access_token}`,
+                    'Content-Type': 'application/json'
+                  }
+                }
+              );
+
+              const result = await response.json();
+
+              if (result.success) {
+                Alert.alert('Account Deleted', 'Your account has been permanently deleted.', [
+                  {
+                    text: 'OK',
+                    onPress: () => {
+                      signOut();
+                      router.replace('/auth/signin');
+                    }
+                  }
+                ]);
+              } else {
+                throw new Error(result.error || 'Failed to delete account');
+              }
+            } catch (error) {
+              console.error('Delete account error:', error);
+              Alert.alert('Error', 'Failed to delete account. Please try again.');
+            } finally {
+              setIsUpdating(false);
+            }
+          }
+        },
       ]
     );
   };
 
+  // ============================================================================
+  // HANDLE SAVE PROFILE - FIX FOR NAME UPDATE
+  // ============================================================================
   const handleSaveProfile = async () => {
     if (!editName.trim() || !editEmail.trim()) {
       Alert.alert('Error', 'Name and email are required');
@@ -202,21 +307,44 @@ const handleLogout = () => {
 
     setIsUpdating(true);
     try {
-      const result = await updateProfile(editName.trim(), editEmail.trim());
+      if (!user) throw new Error('User not authenticated');
+
+      // Update auth metadata
+      const { error: authError } = await supabase.auth.updateUser({
+        email: editEmail.trim(),
+        data: { name: editName.trim() }
+      });
+
+      if (authError) throw authError;
+
+      // CRITICAL FIX: Update users table directly
+      const { error: profileError } = await supabase
+        .from('users')
+        .update({
+          name: editName.trim(),
+          email: editEmail.trim(),
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', user.id);
+
+      if (profileError) throw profileError;
+
+      setShowEditProfile(false);
+      Alert.alert('Success', 'Profile updated successfully!');
       
-      if (result.success) {
-        setShowEditProfile(false);
-        Alert.alert('Success', 'Profile updated successfully!');
-      } else {
-        Alert.alert('Error', result.error || 'Failed to update profile');
-      }
-    } catch (error) {
-      Alert.alert('Error', 'An unexpected error occurred');
+      // Refresh user data
+      window.location.reload(); // Force refresh to get updated user data
+    } catch (error: any) {
+      console.error('Profile update error:', error);
+      Alert.alert('Error', error.message || 'Failed to update profile');
     } finally {
       setIsUpdating(false);
     }
   };
 
+  // ============================================================================
+  // HANDLE CHANGE PASSWORD
+  // ============================================================================
   const handleChangePassword = async () => {
     if (!currentPassword || !newPassword || !confirmPassword) {
       Alert.alert('Error', 'All password fields are required');
@@ -258,21 +386,63 @@ const handleLogout = () => {
     }
   };
 
-  const StatCard: React.FC<{ icon: React.ReactNode; value: string; label: string; color: string }> = ({
-    icon,
-    value,
-    label,
-    color,
-  }) => (
-    <View className={`flex-1 bg-white dark:bg-gray-800 rounded-2xl p-4 mx-1 ${color}`}>
-      <View className="flex-row items-center justify-between mb-2">
-        {icon}
-        <Text className="text-2xl font-bold text-gray-800 dark:text-white">{value}</Text>
-      </View>
-      <Text className="text-sm text-gray-600 dark:text-gray-400">{label}</Text>
-    </View>
-  );
+  // ============================================================================
+  // HANDLE EXPORT DATA
+  // ============================================================================
+  const handleExportData = async () => {
+    try {
+      if (!user) return;
 
+      setIsUpdating(true);
+
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error('No session');
+
+      const response = await fetch(
+        `${process.env.EXPO_PUBLIC_SUPABASE_URL}/functions/v1/export-user-data`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${session.access_token}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      const result = await response.json();
+
+      if (result.success) {
+        Alert.alert('Success', 'Your data export will be emailed to you shortly.');
+      } else {
+        throw new Error(result.error || 'Export failed');
+      }
+    } catch (error) {
+      console.error('Export error:', error);
+      Alert.alert('Error', 'Failed to export data. Please try again.');
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  // ============================================================================
+  // THEME HELPERS
+  // ============================================================================
+  const getThemeLabel = () => {
+    if (theme === 'system') {
+      return `System (${isDark ? 'Dark' : 'Light'})`;
+    }
+    return theme.charAt(0).toUpperCase() + theme.slice(1);
+  };
+
+  const getThemeIcon = () => {
+    if (theme === 'dark') return '🌙';
+    if (theme === 'light') return '☀️';
+    return '🔄';
+  };
+
+  // ============================================================================
+  // MENU BUTTON COMPONENT
+  // ============================================================================
   const MenuButton: React.FC<{
     icon: React.ReactNode;
     title: string;
@@ -309,41 +479,34 @@ const handleLogout = () => {
     </TouchableOpacity>
   );
 
+  // ============================================================================
+  // LOADING STATES
+  // ============================================================================
+  if (loading) {
+    return (
+      <SafeAreaView className="flex-1 bg-gray-50 dark:bg-black justify-center items-center">
+        <ActivityIndicator size="large" color="#3B82F6" />
+        <Text className="mt-2 text-gray-600 dark:text-gray-400">Loading...</Text>
+      </SafeAreaView>
+    );
+  }
 
+  if (!user) {
+    return (
+      <SafeAreaView className="flex-1 bg-gray-50 dark:bg-black justify-center items-center">
+        <ActivityIndicator size="large" color="#3B82F6" />
+        <Text className="text-gray-600 dark:text-gray-400 mt-2">Redirecting...</Text>
+      </SafeAreaView>
+    );
+  }
 
- if (loading) {
-  return (
-    <SafeAreaView className="flex-1 bg-gray-50 dark:bg-black justify-center items-center">
-      <ActivityIndicator size="large" color="#3B82F6" />
-      <Text className="mt-2 text-gray-600 dark:text-gray-400">Loading...</Text>
-    </SafeAreaView>
-  );
-}
-
-// If user is null, show loading while redirecting (ProtectedRoute will handle redirect)
-if (!user) {
-  return (
-    <SafeAreaView className="flex-1 bg-gray-50 dark:bg-black justify-center items-center">
-      <ActivityIndicator size="large" color="#3B82F6" />
-      <Text className="text-gray-600 dark:text-gray-400 mt-2">Redirecting...</Text>
-    </SafeAreaView>
-  );
-}
-
-  //  if (!user) {
-  //   return (
-  //     <SafeAreaView className="flex-1 bg-gray-50 dark:bg-black justify-center items-center">
-  //       <ActivityIndicator size="large" color="#3B82F6" />
-  //       <Text className="text-gray-600 dark:text-gray-400 mt-2">Loading profile...</Text>
-  //     </SafeAreaView>
-  //   );
-  // }
-
+  // ============================================================================
+  // MAIN RENDER
+  // ============================================================================
   return (
     <SafeAreaView className="flex-1 bg-gray-50 dark:bg-black">
       <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
         {/* Header */}
-
         <View className="px-6 pb-6">
           <Text className="text-2xl font-bold text-gray-800 dark:text-white mb-2">Profile Settings</Text>
           <Text className="text-gray-600 dark:text-gray-400">Manage your profile and preferences</Text>
@@ -360,17 +523,9 @@ if (!user) {
                   }}
                   className="w-20 h-20 rounded-full"
                 />
-                <View className="absolute -top-1 -right-1 bg-yellow-500 rounded-full p-1">
-                  <Crown size={16} color="white" />
-                </View>
               </View>
               <View className="flex-1 ml-4">
-                <View className="flex-row items-center">
-                  <Text className="text-xl font-bold text-gray-800 dark:text-white">{user.name || 'User'}</Text>
-                  <View className="ml-2 bg-yellow-100 dark:bg-yellow-900/30 px-2 py-1 rounded-full">
-                    <Text className="text-xs font-semibold text-yellow-700 dark:text-yellow-400">PRO</Text>
-                  </View>
-                </View>
+                <Text className="text-xl font-bold text-gray-800 dark:text-white">{user.name || 'User'}</Text>
                 <Text className="text-gray-600 dark:text-gray-400 mt-1">{user.email}</Text>
                 <Text className="text-sm text-gray-500 dark:text-gray-500 mt-1">
                   Member since {new Date(user.joined_at).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
@@ -386,39 +541,6 @@ if (!user) {
           </View>
         </View>
 
-        {/* Stats Section */}
-        <View className="px-6 mb-6">
-          <Text className="text-lg font-semibold text-gray-800 dark:text-white mb-3">Your Progress</Text>
-          <View className="flex-row">
-            <StatCard
-              icon={<Zap size={20} color="#F59E0B" />}
-              value={stats.streakDays.toString()}
-              label="Day Streak"
-              color="border-l-4 border-yellow-500"
-            />
-            <StatCard
-              icon={<Target size={20} color="#10B981" />}
-              value={`${stats.weeklyGoal}%`}
-              label="Weekly Goal"
-              color="border-l-4 border-green-500"
-            />
-          </View>
-          <View className="flex-row mt-2">
-            <StatCard
-              icon={<BarChart3 size={20} color="#8B5CF6" />}
-              value={stats.habitsCompleted.toString()}
-              label="Completed"
-              color="border-l-4 border-purple-500"
-            />
-            <StatCard
-              icon={<User size={20} color="#EF4444" />}
-              value={stats.totalHabits.toString()}
-              label="Active Habits"
-              color="border-l-4 border-red-500"
-            />
-          </View>
-        </View>
-
         {/* Quick Settings */}
         <View className="px-6 mb-6">
           <Text className="text-lg font-semibold text-gray-800 dark:text-white mb-3">Quick Settings</Text>
@@ -426,13 +548,17 @@ if (!user) {
           <MenuButton
             icon={<Bell size={20} color={settings.notifications ? "#3B82F6" : "#9CA3AF"} />}
             title="Notifications"
-            subtitle="Get reminders for your habits"
+            subtitle="Habit reminders (Coming soon)"
             onPress={() => {}}
             showArrow={false}
             rightElement={
               <Switch
                 value={settings.notifications}
-                onValueChange={(value) => setSettings({ ...settings, notifications: value })}
+                onValueChange={(value) => {
+                  const newSettings = { ...settings, notifications: value };
+                  setSettings(newSettings);
+                  saveSettings(newSettings);
+                }}
                 trackColor={{ false: '#E5E7EB', true: '#3B82F6' }}
                 thumbColor={settings.notifications ? '#ffffff' : '#f4f3f4'}
               />
@@ -456,25 +582,9 @@ if (!user) {
               </TouchableOpacity>
             }
           />
-
-          <MenuButton
-            icon={<Volume2 size={20} color={settings.soundEnabled ? "#3B82F6" : "#9CA3AF"} />}
-            title="Sound Effects"
-            subtitle="Enable completion sounds"
-            onPress={() => {}}
-            showArrow={false}
-            rightElement={
-              <Switch
-                value={settings.soundEnabled}
-                onValueChange={(value) => setSettings({ ...settings, soundEnabled: value })}
-                trackColor={{ false: '#E5E7EB', true: '#3B82F6' }}
-                thumbColor={settings.soundEnabled ? '#ffffff' : '#f4f3f4'}
-              />
-            }
-          />
         </View>
 
-        {/* Main Menu */}
+        {/* Account Settings */}
         <View className="px-6 mb-6">
           <Text className="text-lg font-semibold text-gray-800 dark:text-white mb-3">Account Settings</Text>
           
@@ -486,17 +596,10 @@ if (!user) {
           />
 
           <MenuButton
-            icon={<Settings size={20} color="#3B82F6" />}
-            title="App Preferences"
-            subtitle="Customize your experience"
-            onPress={() => router.push('/')}
-          />
-
-          <MenuButton
             icon={<Shield size={20} color="#3B82F6" />}
             title="Privacy & Security"
-            subtitle="Manage your data and privacy"
-            onPress={() => router.push('/')}
+            subtitle="Manage your data visibility"
+            onPress={() => setShowPrivacyModal(true)}
           />
 
           <MenuButton
@@ -508,7 +611,11 @@ if (!user) {
             rightElement={
               <Switch
                 value={settings.weeklyReports}
-                onValueChange={(value) => setSettings({ ...settings, weeklyReports: value })}
+                onValueChange={(value) => {
+                  const newSettings = { ...settings, weeklyReports: value };
+                  setSettings(newSettings);
+                  saveSettings(newSettings);
+                }}
                 trackColor={{ false: '#E5E7EB', true: '#3B82F6' }}
                 thumbColor={settings.weeklyReports ? '#ffffff' : '#f4f3f4'}
               />
@@ -519,7 +626,7 @@ if (!user) {
             icon={<Download size={20} color="#3B82F6" />}
             title="Export Data"
             subtitle="Download your habit data"
-            onPress={() => Alert.alert('Export', 'Your data export will be emailed to you.')}
+            onPress={handleExportData}
           />
         </View>
 
@@ -531,14 +638,14 @@ if (!user) {
             icon={<HelpCircle size={20} color="#3B82F6" />}
             title="Help Center"
             subtitle="Get help and tutorials"
-            onPress={() => router.push('/')}
+            onPress={() => Alert.alert('Help Center', 'Help documentation coming soon!')}
           />
 
           <MenuButton
             icon={<MessageCircle size={20} color="#3B82F6" />}
             title="Contact Support"
             subtitle="Get in touch with our team"
-            onPress={() => router.push('/')}
+            onPress={() => Alert.alert('Contact Support', 'support@habitron.app')}
           />
 
           <MenuButton
@@ -762,6 +869,104 @@ if (!user) {
             <View className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg">
               <Text className="text-blue-800 dark:text-blue-200 text-sm">
                 <Text className="font-semibold">Security tip:</Text> Use a strong password with a mix of letters, numbers, and symbols. Avoid using personal information.
+              </Text>
+            </View>
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+
+      {/* Privacy Settings Modal */}
+      <Modal
+        visible={showPrivacyModal}
+        animationType="slide"
+        presentationStyle="pageSheet"
+      >
+        <SafeAreaView className="flex-1 bg-white dark:bg-black">
+          <View className="flex-row items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
+            <TouchableOpacity onPress={() => setShowPrivacyModal(false)}>
+              <Text className="text-blue-500 dark:text-blue-400 font-semibold">Close</Text>
+            </TouchableOpacity>
+            <Text className="text-lg font-semibold text-gray-800 dark:text-white">Privacy & Security</Text>
+            <View style={{ width: 50 }} />
+          </View>
+          
+          <ScrollView className="flex-1 p-6">
+            <View className="mb-6">
+              <Text className="text-lg font-bold text-gray-800 dark:text-white mb-2">Community Visibility</Text>
+              <Text className="text-gray-600 dark:text-gray-400 mb-4">
+                Control how your data appears in the community feed and challenges.
+              </Text>
+            </View>
+
+            <View className="bg-white dark:bg-gray-800 rounded-xl p-4 mb-4">
+              <View className="flex-row items-center justify-between mb-3">
+                <View className="flex-1 pr-4">
+                  <Text className="font-semibold text-gray-800 dark:text-white mb-1">
+                    Keep Activity Private
+                  </Text>
+                  <Text className="text-sm text-gray-600 dark:text-gray-400">
+                    When enabled, your habit completions and achievements won't appear in the community feed
+                  </Text>
+                </View>
+                <Switch
+                  value={settings.dataPrivacy}
+                  onValueChange={(value) => {
+                    const newSettings = { ...settings, dataPrivacy: value };
+                    setSettings(newSettings);
+                    saveSettings(newSettings);
+                  }}
+                  trackColor={{ false: '#E5E7EB', true: '#3B82F6' }}
+                  thumbColor={settings.dataPrivacy ? '#ffffff' : '#f4f3f4'}
+                />
+              </View>
+            </View>
+
+            <View className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg mb-4">
+              <Text className="text-blue-800 dark:text-blue-200 text-sm">
+                <Text className="font-semibold">Note:</Text> When privacy mode is on:
+                {'\n'}• Your activities won't appear in the community feed
+                {'\n'}• You can still join challenges, but your progress will be private
+                {'\n'}• Your profile will still be visible if you interact with others
+              </Text>
+            </View>
+
+            <View className="mb-6">
+              <Text className="text-lg font-bold text-gray-800 dark:text-white mb-2">What Gets Shared</Text>
+              <Text className="text-gray-600 dark:text-gray-400 mb-3">
+                When privacy mode is off, the following may be visible to other users:
+              </Text>
+              
+              <View className="space-y-2">
+                <View className="flex-row items-start mb-2">
+                  <Text className="text-gray-800 dark:text-white mr-2">•</Text>
+                  <Text className="text-gray-600 dark:text-gray-400 flex-1">
+                    Habit completion milestones (10, 25, 50, 100+ completions)
+                  </Text>
+                </View>
+                <View className="flex-row items-start mb-2">
+                  <Text className="text-gray-800 dark:text-white mr-2">•</Text>
+                  <Text className="text-gray-600 dark:text-gray-400 flex-1">
+                    Streak achievements (7, 14, 30+ day streaks)
+                  </Text>
+                </View>
+                <View className="flex-row items-start mb-2">
+                  <Text className="text-gray-800 dark:text-white mr-2">•</Text>
+                  <Text className="text-gray-600 dark:text-gray-400 flex-1">
+                    Challenge participation and progress
+                  </Text>
+                </View>
+                <View className="flex-row items-start mb-2">
+                  <Text className="text-gray-800 dark:text-white mr-2">•</Text>
+                  <Text className="text-gray-600 dark:text-gray-400 flex-1">
+                    Profile information (name, avatar, join date)
+                  </Text>
+                </View>
+              </View>
+            </View>
+
+            <View className="bg-yellow-50 dark:bg-yellow-900/20 p-4 rounded-lg">
+              <Text className="text-yellow-800 dark:text-yellow-200 text-sm">
+                <Text className="font-semibold">Privacy Reminder:</Text> Your specific habit details (names, descriptions, daily progress) are never shared publicly, regardless of this setting.
               </Text>
             </View>
           </ScrollView>

@@ -20,6 +20,7 @@ export class HabitService {
   private db: DatabaseService;
   private networkStatus: NetworkStatus = { isConnected: false, isInternetReachable: false };
   private networkUnsubscribe?: (() => void);
+  private SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL!;
 
   constructor(databaseService: DatabaseService) {
     this.db = databaseService;
@@ -165,6 +166,77 @@ export class HabitService {
   }
 
   // ============================================================================
+// CREATE HABIT WITH REMINDERS
+// ============================================================================
+ public async createHabitWithReminders(
+  habitData: CreateHabitRequest,
+  reminders?: Array<{ time: string; days: string[]; enabled: boolean }>
+): Promise<Habit> {
+  const userId = await this.getCurrentUserId();
+  if (!userId) throw new Error('User not authenticated');
+
+  const now = new Date().toISOString();
+  const habit: LocalHabitRecord = {
+    id: uuid.v4() as string,
+    user_id: userId,
+    title: habitData.title,
+    icon: habitData.icon,
+    description: habitData.description,
+    category: habitData.category,
+    target_count: habitData.target_count,
+    target_unit: habitData.target_unit,
+    frequency_type: habitData.frequency_type || 'daily',
+    frequency_count: habitData.frequency_count || null,
+    frequency_days: habitData.frequency_days || null,
+    bg_color: habitData.bg_color,
+    is_active: true,
+    created_at: now,
+    updated_at: now,
+    is_dirty: true,
+    sync_status: 'pending'
+  };
+
+  try {
+    // Insert habit first
+    await this.db.insertHabit(habit);
+
+    // Create reminders if provided
+    if (reminders && reminders.length > 0) {
+      const NotificationService = require('./notificationService').default;
+      
+      for (const reminder of reminders) {
+        if (reminder.enabled && reminder.time && reminder.days.length > 0) {
+          try {
+            await NotificationService.createReminder(
+              habit.id,
+              userId,
+              reminder.time,
+              reminder.days,
+              habit.title
+            );
+            console.log('✅ Reminder created for new habit');
+          } catch (error) {
+            console.warn('⚠️ Failed to create reminder:', error);
+            // Don't fail habit creation if reminder fails
+          }
+        }
+      }
+    }
+
+    // Sync to server if online
+    if (this.isOnline()) {
+      await this.syncSingleHabit(habit);
+    }
+
+    return habit;
+  } catch (error) {
+    console.error('Error creating habit with reminders:', error);
+    throw error;
+  }
+}
+
+
+  // ============================================================================
   // UPDATE HABIT
   // ============================================================================
   public async updateHabit(habitId: string, updates: UpdateHabitRequest): Promise<void> {
@@ -193,6 +265,74 @@ export class HabitService {
       throw error;
     }
   }
+
+// ============================================================================
+// UPDATE HABIT WITH REMINDERS
+// ============================================================================
+public async updateHabitWithReminders(
+  habitId: string,
+  updates: UpdateHabitRequest,
+  reminders?: Array<{ time: string; days: string[]; enabled: boolean }>
+): Promise<void> {
+  const userId = await this.getCurrentUserId();
+  if (!userId) throw new Error('User not authenticated');
+
+  try {
+    // Update habit data
+    const updateData: Partial<LocalHabitRecord> = {
+      ...updates,
+      updated_at: new Date().toISOString(),
+      is_dirty: true,
+      sync_status: 'pending'
+    };
+
+    await this.db.updateHabit(habitId, updateData);
+
+    // Handle reminders if provided
+    if (reminders) {
+      const NotificationService = require('./notificationService').default;
+      
+      // Get current habit data for title
+      const habits = await this.db.getHabits(userId);
+      const habit = habits.find(h => h.id === habitId);
+      const habitTitle = updates.title || habit?.title || 'Habit';
+
+      for (const reminder of reminders) {
+        try {
+          if (reminder.enabled && reminder.time && reminder.days.length > 0) {
+            // This will update or create the reminder
+            await NotificationService.createReminder(
+              habitId,
+              userId,
+              reminder.time,
+              reminder.days,
+              habitTitle
+            );
+            console.log('✅ Reminder updated for habit');
+          } else {
+            // Delete reminder if disabled
+            await NotificationService.cancelHabitReminders(habitId);
+            console.log('🗑️ Reminders disabled for habit');
+          }
+        } catch (error) {
+          console.warn('⚠️ Failed to update reminder:', error);
+        }
+      }
+    }
+
+    // Sync to server if online
+    if (this.isOnline()) {
+      const habits = await this.db.getHabits(userId);
+      const habit = habits.find(h => h.id === habitId);
+      if (habit) {
+        await this.syncSingleHabit(habit);
+      }
+    }
+  } catch (error) {
+    console.error('Error updating habit with reminders:', error);
+    throw error;
+  }
+}
 
   // ============================================================================
   // DELETE HABIT
@@ -230,6 +370,10 @@ export class HabitService {
     const now = new Date().toISOString();
 
     try {
+      // Get habit details first
+        const habits = await this.db.getHabits(userId);
+        const habit = habits.find(h => h.id === habitId);
+        if (!habit) throw new Error('Habit not found');
       // ALWAYS use upsert to avoid duplicate key errors
       const completion: LocalCompletionRecord = {
         id: uuid.v4() as string,
@@ -244,6 +388,8 @@ export class HabitService {
       };
 
       await this.db.upsertCompletion(completion);
+      await this.createFeedEventForCompletion(habitId, userId, count, habit.target_count);
+      await this.checkAndCreateRevivedEvent(habitId, userId);
 
       // Sync in background
       if (this.isOnline()) {
@@ -635,6 +781,156 @@ export class HabitService {
       throw error;
     }
   }
+
+
+// ============================================================================
+// COMMUNITY INTEGRATION METHODS
+// Add these to your HabitService class
+// ============================================================================
+
+/**
+ * Create feed event after habit completion
+ * This should be called in your updateHabitCompletion or toggleHabitCompletion methods
+ */
+private async createFeedEventForCompletion(
+  habitId: string,
+  userId: string,
+  completedCount: number,
+  targetCount: number
+): Promise<void> {
+  try {
+    // Only create feed events for significant achievements
+    if (completedCount < targetCount) return;
+
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) return;
+
+    // Get habit details
+    const habits = await this.db.getHabits(userId);
+    const habit = habits.find(h => h.id === habitId);
+    if (!habit) return;
+
+    // Get all completions for streak calculation
+    const completions = await this.db.getCompletions(userId, 365);
+    const habitCompletions = completions.filter(c => c.habit_id === habitId);
+    
+    const { currentStreak } = calculateHabitStreak(habit, habitCompletions);
+    const totalCompletions = habitCompletions.length;
+
+    // Determine event type
+    let eventType = 'completion';
+    
+    // Milestone achievements (every 10, 25, 50, 100, etc.)
+    if ([10, 25, 50, 100, 250, 500, 1000].includes(totalCompletions)) {
+      eventType = 'milestone';
+    }
+    
+    // Streak achievements (7, 14, 21, 30, 60, 90, etc.)
+    if ([7, 14, 21, 30, 60, 90, 180, 365].includes(currentStreak)) {
+      eventType = 'streak';
+    }
+
+    // Call edge function to create feed event
+    await fetch(
+      `${this.SUPABASE_URL}/functions/v1/generate-feed-event`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          type: eventType,
+          habit_id: habitId,
+          metadata: {
+            completed_count: completedCount,
+            total_completions: totalCompletions,
+            current_streak: currentStreak
+          }
+        })
+      }
+    );
+  } catch (error) {
+    // Don't throw - feed events are non-critical
+    console.warn('Failed to create feed event:', error);
+  }
+}
+
+/**
+ * Create feed event when habit is created
+ */
+private async createFeedEventForNewHabit(habit: LocalHabitRecord): Promise<void> {
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) return;
+
+    await fetch(
+      `${this.SUPABASE_URL}/functions/v1/generate-feed-event`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          type: 'habit_created',
+          habit_id: habit.id
+        })
+      }
+    );
+  } catch (error) {
+    console.warn('Failed to create feed event for new habit:', error);
+  }
+}
+
+/**
+ * Create feed event when habit is revived (completed after 7+ days break)
+ */
+private async checkAndCreateRevivedEvent(
+  habitId: string,
+  userId: string
+): Promise<void> {
+  try {
+    const completions = await this.db.getCompletions(userId, 30);
+    const habitCompletions = completions
+      .filter(c => c.habit_id === habitId)
+      .sort((a, b) => b.completion_date.localeCompare(a.completion_date));
+
+    if (habitCompletions.length < 2) return;
+
+    const today = new Date(habitCompletions[0].completion_date);
+    const lastCompletion = new Date(habitCompletions[1].completion_date);
+    const daysSinceLastCompletion = Math.floor(
+      (today.getTime() - lastCompletion.getTime()) / (1000 * 60 * 60 * 24)
+    );
+
+    // If revived after 7+ days, create event
+    if (daysSinceLastCompletion >= 7) {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+
+      await fetch(
+        `${this.SUPABASE_URL}/functions/v1/generate-feed-event`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${session.access_token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            type: 'habit_revived',
+            habit_id: habitId,
+            metadata: {
+              days_since_last: daysSinceLastCompletion
+            }
+          })
+        }
+      );
+    }
+  } catch (error) {
+    console.warn('Failed to check for revived habit:', error);
+  }
+}
 
   // ============================================================================
   // UTILITY METHODS

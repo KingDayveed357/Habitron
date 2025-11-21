@@ -54,6 +54,7 @@ export interface HabitWithCompletion extends Habit {
 }
 
 export interface CreateHabitRequest {
+  id: string;
   title: string;
   icon: string;
   description?: string;

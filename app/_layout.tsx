@@ -9,11 +9,31 @@ import { NavigationRouter } from './components/ui/NavigationRouter';
 import { DatabaseInitializer } from '@/utils/DatabaseInitializer';
 import { DatabaseMigration } from '@/utils/DatabaseInitializer';
 import { AppStateManager, type AppState } from '@/utils/AppStateManager';
+import * as Notifications from 'expo-notifications';
 import "./globals.css";
+import { useNotifications } from '@/hooks/useNotification';
+
+// SplashScreen.preventAutoHideAsync();
+
+function NotificationInitializer() {
+  useNotifications(); 
+  return null;
+}
 
 export default function RootLayout() {
   const [isReady, setIsReady] = useState(false);
   const [initialState, setInitialState] = useState<AppState>('loading');
+
+  // Configure notification behavior
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,   
+    shouldPlaySound: true,   
+    shouldSetBadge: true,    
+    shouldShowBanner: true,  
+    shouldShowList: true,    
+  }),
+});
 
   useEffect(() => {
     initializeApp();
@@ -47,6 +67,7 @@ export default function RootLayout() {
       >
         <AppProviders>
           <ThemeProvider>
+            <NotificationInitializer />
             <StatusBar barStyle="light-content" />
             <NavigationRouter initialState={initialState} />
           </ThemeProvider>

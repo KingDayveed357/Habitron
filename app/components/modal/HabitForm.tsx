@@ -1,5 +1,5 @@
-// app/components/habit/HabitForm.tsx
-import React from 'react';
+// app/components/habit/HabitForm.tsx - FIXED VERSION
+import React, { useState, useEffect } from 'react';
 import { View, ScrollView } from 'react-native';
 import { HabitFormHeader } from './FormHeader';
 import { HabitAISuggestions } from './AISuggestions';
@@ -9,22 +9,24 @@ import { HabitFrequency } from './frequency';
 import { HabitColorPicker } from './colorPicker';
 import { HabitDescription } from './description';
 import { HabitPreview } from './preview';
+import { HabitReminder } from '../ui/HabitReminder';
 import { IconPickerModal } from './IconPickerModal';
 import { useHabitForm } from '@/hooks/useHabitForm';
 import { CreateHabitRequest, UpdateHabitRequest } from '@/types/habit';
+import { HabitReminder as ReminderType } from '@/services/notificationService';
 
 interface HabitFormCreateProps {
   mode: 'create';
   initialData?: Partial<CreateHabitRequest>;
-  onSubmit: (data: CreateHabitRequest) => Promise<void>;
+  onSubmit: (data: CreateHabitRequest, reminders?: ReminderType[]) => Promise<void>;
   onCancel: () => void;
   loading?: boolean;
 }
 
 interface HabitFormEditProps {
   mode: 'edit';
-  initialData: Partial<CreateHabitRequest>;
-  onSubmit: (data: UpdateHabitRequest) => Promise<void>;
+  initialData: Partial<CreateHabitRequest> & { id: string };
+  onSubmit: (data: UpdateHabitRequest, reminders?: ReminderType[]) => Promise<void>;
   onCancel: () => void;
   loading?: boolean;
 }
@@ -38,6 +40,9 @@ export const HabitForm: React.FC<HabitFormProps> = ({
   onCancel,
   loading = false,
 }) => {
+  const { user } = require('@/hooks/useAuth').useAuth();
+  const [reminders, setReminders] = useState<ReminderType[]>([]);
+  
   const {
     formData,
     errors,
@@ -46,7 +51,6 @@ export const HabitForm: React.FC<HabitFormProps> = ({
     updateField,
     validateForm,
     handleSubmit,
-    // Frequency states
     selectedDays,
     weeklyCount,
     monthlyDays,
@@ -55,23 +59,34 @@ export const HabitForm: React.FC<HabitFormProps> = ({
     toggleAllDays,
     toggleMonthlyDay,
     setWeeklyCount,
-    // Categories
     categories,
     isAddingCategory,
     customCategory,
     setCustomCategory,
     setIsAddingCategory,
     addCustomCategory,
-    // Icon modal
     iconModalTab,
     setIconModalTab,
   } = useHabitForm({
     initialData,
-    onSubmit,
+    onSubmit: async (data) => {
+      // CRITICAL FIX: Pass reminders to onSubmit
+      await onSubmit(data as any, reminders);
+    },
   });
 
+  const habitId = mode === 'edit' ? (initialData as any).id : undefined;
   const showAISuggestions = mode === 'create';
   const showPreview = mode === 'create';
+
+  const handleRemindersChange = (newReminders: ReminderType[]) => {
+    console.log('📝 Reminders updated in form:', newReminders);
+    setReminders(newReminders);
+  };
+
+  if (!user) {
+    return null;
+  }
 
   return (
     <View className="flex-1">
@@ -90,7 +105,6 @@ export const HabitForm: React.FC<HabitFormProps> = ({
         showsVerticalScrollIndicator={false}
       >
         <View className="px-4">
-          {/* AI Suggestions - Only in Create Mode */}
           {showAISuggestions && (
             <HabitAISuggestions
               onSelectSuggestion={(suggestion) => {
@@ -105,7 +119,6 @@ export const HabitForm: React.FC<HabitFormProps> = ({
             />
           )}
 
-          {/* Basic Information */}
           <HabitBasicInfo
             title={formData.title}
             icon={formData.icon}
@@ -123,13 +136,11 @@ export const HabitForm: React.FC<HabitFormProps> = ({
             onToggleAddCategory={() => setIsAddingCategory(!isAddingCategory)}
           />
 
-          {/* Color Picker */}
           <HabitColorPicker
             selectedColor={formData.bg_color}
             onColorChange={(color) => updateField('bg_color', color)}
           />
 
-          {/* Goal Settings */}
           <HabitGoalSettings
             targetCount={formData.target_count}
             targetUnit={formData.target_unit}
@@ -141,24 +152,34 @@ export const HabitForm: React.FC<HabitFormProps> = ({
             }}
           />
 
-          {/* Frequency */}
           <HabitFrequency
             frequencyType={formData.frequency_type}
             onFrequencyTypeChange={(type) => updateField('frequency_type', type)}
-            // Daily
             selectedDays={selectedDays}
             allDaysSelected={allDaysSelected}
             onToggleDailyDay={toggleDailyDay}
             onToggleAllDays={toggleAllDays}
-            // Weekly
             weeklyCount={weeklyCount}
             onWeeklyCountChange={setWeeklyCount}
-            // Monthly
             monthlyDays={monthlyDays}
             onToggleMonthlyDay={toggleMonthlyDay}
           />
 
-          {/* Preview - Only in Create Mode */}
+          {/* REMINDER SECTION - Now properly integrated */}
+          <HabitReminder
+            habitId={habitId}
+            habitTitle={formData.title || 'New Habit'}
+            userId={user.id}
+            mode={mode}
+            onRemindersChange={handleRemindersChange}
+          />
+
+          <HabitDescription
+            description={formData.description || ''}
+            onDescriptionChange={(text) => updateField('description', text)}
+            error={errors.description}
+          />
+
           {showPreview && (
             <HabitPreview
               title={formData.title}
@@ -173,17 +194,9 @@ export const HabitForm: React.FC<HabitFormProps> = ({
               description={formData.description}
             />
           )}
-
-          {/* Description */}
-          <HabitDescription
-            description={formData.description || ''}
-            onDescriptionChange={(text) => updateField('description', text)}
-            error={errors.description}
-          />
         </View>
       </ScrollView>
 
-      {/* Icon Picker Modal */}
       <IconPickerModal
         visible={isIconModalVisible}
         selectedIcon={formData.icon}
